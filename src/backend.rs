@@ -23,19 +23,100 @@ use tokio::{
 use tower_http::services::{ServeDir, ServeFile};
 use url::{Host, Url};
 
-const PREVIEW_CACHE_TTL_SECONDS: u64 = 300;
-const PREVIEW_CACHE_MAX_ENTRIES: usize = 256;
-const RESPONSE_MAX_BYTES: usize = 512 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
-const MAX_REDIRECTS: usize = 4;
-const MAX_RESOLVED_IP_ATTEMPTS: usize = 3;
+const DEFAULT_PREVIEW_CACHE_TTL_SECONDS: u64 = 300;
+const DEFAULT_PREVIEW_CACHE_MAX_ENTRIES: usize = 256;
+const DEFAULT_PREVIEW_RESPONSE_MAX_BYTES: usize = 512 * 1024;
+const DEFAULT_PREVIEW_REQUEST_TIMEOUT_MS: u64 = 6_000;
+const DEFAULT_PREVIEW_CONNECT_TIMEOUT_MS: u64 = 3_000;
+const DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS: u64 = 2_000;
+const DEFAULT_PREVIEW_MAX_REDIRECTS: usize = 4;
+const DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS: usize = 3;
+
+const PREVIEW_CACHE_TTL_SECONDS_BOUNDS: (u64, u64) = (1, 86_400);
+const PREVIEW_CACHE_MAX_ENTRIES_BOUNDS: (usize, usize) = (1, 10_000);
+const PREVIEW_RESPONSE_MAX_BYTES_BOUNDS: (usize, usize) = (1_024, 10 * 1024 * 1024);
+const PREVIEW_REQUEST_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 120_000);
+const PREVIEW_CONNECT_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 30_000);
+const PREVIEW_DNS_LOOKUP_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 30_000);
+const PREVIEW_MAX_REDIRECTS_BOUNDS: (usize, usize) = (1, 10);
+const PREVIEW_MAX_RESOLVED_IP_ATTEMPTS_BOUNDS: (usize, usize) = (1, 10);
 const USER_AGENT: &str = "portfolio-preview-bot/1.0";
+
+#[derive(Clone)]
+struct PreviewRuntimeConfig {
+    cache_ttl_seconds: u64,
+    cache_max_entries: usize,
+    response_max_bytes: usize,
+    request_timeout: Duration,
+    connect_timeout: Duration,
+    dns_lookup_timeout: Duration,
+    max_redirects: usize,
+    max_resolved_ip_attempts: usize,
+}
+
+impl PreviewRuntimeConfig {
+    fn from_env() -> Self {
+        let cache_ttl_seconds = parse_env_u64_with_bounds(
+            "PREVIEW_CACHE_TTL_SECONDS",
+            DEFAULT_PREVIEW_CACHE_TTL_SECONDS,
+            PREVIEW_CACHE_TTL_SECONDS_BOUNDS,
+        );
+        let cache_max_entries = parse_env_usize_with_bounds(
+            "PREVIEW_CACHE_MAX_ENTRIES",
+            DEFAULT_PREVIEW_CACHE_MAX_ENTRIES,
+            PREVIEW_CACHE_MAX_ENTRIES_BOUNDS,
+        );
+        let response_max_bytes = parse_env_usize_with_bounds(
+            "PREVIEW_RESPONSE_MAX_BYTES",
+            DEFAULT_PREVIEW_RESPONSE_MAX_BYTES,
+            PREVIEW_RESPONSE_MAX_BYTES_BOUNDS,
+        );
+        let request_timeout_ms = parse_timeout_ms_with_legacy_seconds(
+            "PREVIEW_REQUEST_TIMEOUT_MS",
+            "PREVIEW_REQUEST_TIMEOUT_SECONDS",
+            DEFAULT_PREVIEW_REQUEST_TIMEOUT_MS,
+            PREVIEW_REQUEST_TIMEOUT_MS_BOUNDS,
+        );
+        let connect_timeout_ms = parse_timeout_ms_with_legacy_seconds(
+            "PREVIEW_CONNECT_TIMEOUT_MS",
+            "PREVIEW_CONNECT_TIMEOUT_SECONDS",
+            DEFAULT_PREVIEW_CONNECT_TIMEOUT_MS,
+            PREVIEW_CONNECT_TIMEOUT_MS_BOUNDS,
+        );
+        let dns_lookup_timeout_ms = parse_timeout_ms_with_legacy_seconds(
+            "PREVIEW_DNS_LOOKUP_TIMEOUT_MS",
+            "PREVIEW_DNS_LOOKUP_TIMEOUT_SECONDS",
+            DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS,
+            PREVIEW_DNS_LOOKUP_TIMEOUT_MS_BOUNDS,
+        );
+        let max_redirects = parse_env_usize_with_bounds(
+            "PREVIEW_MAX_REDIRECTS",
+            DEFAULT_PREVIEW_MAX_REDIRECTS,
+            PREVIEW_MAX_REDIRECTS_BOUNDS,
+        );
+        let max_resolved_ip_attempts = parse_env_usize_with_bounds(
+            "PREVIEW_MAX_RESOLVED_IP_ATTEMPTS",
+            DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS,
+            PREVIEW_MAX_RESOLVED_IP_ATTEMPTS_BOUNDS,
+        );
+
+        Self {
+            cache_ttl_seconds,
+            cache_max_entries,
+            response_max_bytes,
+            request_timeout: Duration::from_millis(request_timeout_ms),
+            connect_timeout: Duration::from_millis(connect_timeout_ms),
+            dns_lookup_timeout: Duration::from_millis(dns_lookup_timeout_ms),
+            max_redirects,
+            max_resolved_ip_attempts,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    config: PreviewRuntimeConfig,
 }
 
 #[derive(Clone)]
@@ -85,9 +166,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8080);
     let bind_address = format!("0.0.0.0:{port}");
+    let preview_config = PreviewRuntimeConfig::from_env();
 
     let state = AppState {
         cache: Arc::new(RwLock::new(HashMap::new())),
+        config: preview_config,
     };
 
     let static_service = ServeDir::new("dist").not_found_service(ServeFile::new("dist/index.html"));
@@ -124,11 +207,11 @@ async fn get_preview(
         return json_response(
             StatusCode::OK,
             payload,
-            cache_control(&format!("public, max-age={PREVIEW_CACHE_TTL_SECONDS}")),
+            cache_control(&format!("public, max-age={}", state.config.cache_ttl_seconds)),
         );
     }
 
-    let fetched = match fetch_preview_payload(parsed_url).await {
+    let fetched = match fetch_preview_payload(parsed_url, &state.config).await {
         Ok(payload) => payload,
         Err(error_message) => {
             return json_response(
@@ -144,7 +227,7 @@ async fn get_preview(
     json_response(
         StatusCode::OK,
         fetched,
-        cache_control(&format!("public, max-age={PREVIEW_CACHE_TTL_SECONDS}")),
+        cache_control(&format!("public, max-age={}", state.config.cache_ttl_seconds)),
     )
 }
 
@@ -157,6 +240,44 @@ fn json_response(status: StatusCode, payload: PreviewPayload, cache_control: Hea
 
 fn cache_control(value: &str) -> HeaderValue {
     HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static("no-store"))
+}
+
+fn parse_env_u64_with_bounds(name: &str, default: u64, bounds: (u64, u64)) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| (bounds.0..=bounds.1).contains(value))
+        .unwrap_or(default)
+}
+
+fn parse_env_usize_with_bounds(name: &str, default: usize, bounds: (usize, usize)) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| (bounds.0..=bounds.1).contains(value))
+        .unwrap_or(default)
+}
+
+fn parse_timeout_ms_with_legacy_seconds(
+    milliseconds_key: &str,
+    seconds_key: &str,
+    default_ms: u64,
+    bounds: (u64, u64),
+) -> u64 {
+    if let Some(milliseconds) = std::env::var(milliseconds_key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| (bounds.0..=bounds.1).contains(value))
+    {
+        return milliseconds;
+    }
+
+    std::env::var(seconds_key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .and_then(|seconds| seconds.checked_mul(1_000))
+        .filter(|value| (bounds.0..=bounds.1).contains(value))
+        .unwrap_or(default_ms)
 }
 
 async fn read_from_cache(state: &AppState, key: &str) -> Option<PreviewPayload> {
@@ -182,7 +303,7 @@ async fn write_to_cache(state: &AppState, key: String, value: PreviewPayload) {
 
     purge_expired_entries(&mut cache, now);
 
-    if !cache.contains_key(&key) && cache.len() >= PREVIEW_CACHE_MAX_ENTRIES {
+    if !cache.contains_key(&key) && cache.len() >= state.config.cache_max_entries {
         evict_oldest_entry(&mut cache);
     }
 
@@ -190,7 +311,7 @@ async fn write_to_cache(state: &AppState, key: String, value: PreviewPayload) {
         key,
         CacheEntry {
             created_at: now,
-            expires_at: now + Duration::from_secs(PREVIEW_CACHE_TTL_SECONDS),
+            expires_at: now + Duration::from_secs(state.config.cache_ttl_seconds),
             value,
         },
     );
@@ -281,14 +402,17 @@ fn is_documentation_ipv6(ip: std::net::Ipv6Addr) -> bool {
     segments[0] == 0x2001 && segments[1] == 0x0db8
 }
 
-async fn fetch_preview_payload(target_url: Url) -> Result<PreviewPayload, &'static str> {
+async fn fetch_preview_payload(
+    target_url: Url,
+    config: &PreviewRuntimeConfig,
+) -> Result<PreviewPayload, &'static str> {
     let mut current_url = target_url;
 
-    for hop in 0..=MAX_REDIRECTS {
-        let response = send_pinned_request(&current_url).await?;
+    for hop in 0..=config.max_redirects {
+        let response = send_pinned_request(&current_url, config).await?;
 
         if response.status().is_redirection() {
-            if hop == MAX_REDIRECTS {
+            if hop == config.max_redirects {
                 return Err("too many redirects");
             }
 
@@ -301,7 +425,7 @@ async fn fetch_preview_payload(target_url: Url) -> Result<PreviewPayload, &'stat
             return Err("received non-success response");
         }
 
-        let body = read_limited_body(response).await?;
+        let body = read_limited_body(response, config.response_max_bytes).await?;
         let metadata = extract_metadata(&body, &current_url);
 
         return Ok(PreviewPayload {
@@ -336,14 +460,17 @@ async fn parse_and_validate_redirect_target(
     Ok(next_url)
 }
 
-async fn send_pinned_request(target_url: &Url) -> Result<reqwest::Response, &'static str> {
+async fn send_pinned_request(
+    target_url: &Url,
+    config: &PreviewRuntimeConfig,
+) -> Result<reqwest::Response, &'static str> {
     ensure_url_shape_is_allowed(target_url)?;
 
     let host = target_url.host_str().ok_or("URL host is required")?;
     let host_port = target_url.port_or_known_default().ok_or("URL port is required")?;
 
     if host.parse::<IpAddr>().is_ok() {
-        let client = build_preview_client(None)?;
+        let client = build_preview_client(None, config)?;
         return client
             .get(target_url.clone())
             .send()
@@ -351,11 +478,11 @@ async fn send_pinned_request(target_url: &Url) -> Result<reqwest::Response, &'st
             .map_err(|_| "failed to fetch URL");
     }
 
-    let resolved_ips = resolve_and_validate_host(host, host_port).await?;
+    let resolved_ips = resolve_and_validate_host(host, host_port, config).await?;
 
-    for pinned_ip in resolved_ips.into_iter().take(MAX_RESOLVED_IP_ATTEMPTS) {
+    for pinned_ip in resolved_ips.into_iter().take(config.max_resolved_ip_attempts) {
         let pinned_socket = SocketAddr::new(pinned_ip, host_port);
-        let client = build_preview_client(Some((host, pinned_socket)))?;
+        let client = build_preview_client(Some((host, pinned_socket)), config)?;
 
         match client.get(target_url.clone()).send().await {
             Ok(response) => return Ok(response),
@@ -368,11 +495,12 @@ async fn send_pinned_request(target_url: &Url) -> Result<reqwest::Response, &'st
 
 fn build_preview_client(
     resolved_host: Option<(&str, SocketAddr)>,
+    config: &PreviewRuntimeConfig,
 ) -> Result<reqwest::Client, &'static str> {
     let mut client_builder = reqwest::Client::builder()
         .redirect(Policy::none())
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(config.request_timeout)
+        .connect_timeout(config.connect_timeout)
         .user_agent(USER_AGENT);
 
     if let Some((host, pinned_socket)) = resolved_host {
@@ -384,8 +512,12 @@ fn build_preview_client(
         .map_err(|_| "failed to prepare request client")
 }
 
-async fn resolve_and_validate_host(host: &str, port: u16) -> Result<Vec<IpAddr>, &'static str> {
-    let resolved_hosts = timeout(DNS_LOOKUP_TIMEOUT, lookup_host((host, port)))
+async fn resolve_and_validate_host(
+    host: &str,
+    port: u16,
+    config: &PreviewRuntimeConfig,
+) -> Result<Vec<IpAddr>, &'static str> {
+    let resolved_hosts = timeout(config.dns_lookup_timeout, lookup_host((host, port)))
         .await
         .map_err(|_| "host lookup timed out")?
         .map_err(|_| "unable to resolve host")?;
@@ -452,13 +584,14 @@ mod tests {
     async fn cache_overwrite_at_capacity_does_not_evict_oldest() {
         let state = AppState {
             cache: Arc::new(RwLock::new(HashMap::new())),
+            config: PreviewRuntimeConfig::from_env(),
         };
         let now = Instant::now();
 
         {
             let mut cache = state.cache.write().await;
 
-            for index in 0..PREVIEW_CACHE_MAX_ENTRIES {
+            for index in 0..DEFAULT_PREVIEW_CACHE_MAX_ENTRIES {
                 let key = format!("key-{index}");
                 cache.insert(
                     key,
@@ -493,7 +626,7 @@ mod tests {
         .await;
 
         let cache = state.cache.read().await;
-        assert_eq!(cache.len(), PREVIEW_CACHE_MAX_ENTRIES);
+        assert_eq!(cache.len(), DEFAULT_PREVIEW_CACHE_MAX_ENTRIES);
         assert!(cache.contains_key("key-0"));
         assert_eq!(
             cache.get("key-10").and_then(|entry| entry.value.title.as_deref()),
@@ -514,14 +647,17 @@ mod tests {
     }
 }
 
-async fn read_limited_body(response: reqwest::Response) -> Result<String, &'static str> {
+async fn read_limited_body(
+    response: reqwest::Response,
+    max_response_bytes: usize,
+) -> Result<String, &'static str> {
     let mut stream = response.bytes_stream();
     let mut body: Vec<u8> = Vec::with_capacity(8192);
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|_| "failed reading response body")?;
 
-        if body.len() + chunk.len() > RESPONSE_MAX_BYTES {
+        if body.len() + chunk.len() > max_response_bytes {
             return Err("response body too large");
         }
 
