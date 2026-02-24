@@ -1,0 +1,31 @@
+[package]
+name = "portfolio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "Document",
+  "Element",
+  "HtmlElement",
+  "MediaQueryList",
+  "Storage",
+  "Window",
+] }
+yew = { version = "0.21", features = ["csr"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axum = "0.8"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["brotli", "deflate", "gzip", "http2", "rustls-tls", "stream"] }
+scraper = "0.24"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }
+tower-http = { version = "0.6", features = ["fs"] }
+url = "2"

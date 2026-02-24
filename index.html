@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kyler Cao - Computer Science Student</title>
+    <meta
+      name="description"
+      content="Portfolio of Kyler Cao, a Texas A&M computer science student building practical full-stack and machine learning projects."
+    />
+    <script>
+      (function () {
+        try {
+          var key = "portfolio-theme";
+          var stored = localStorage.getItem(key);
+          var isStoredTheme = stored === "light" || stored === "dark";
+          var systemDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme = isStoredTheme ? stored : systemDark ? "dark" : "light";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (error) {
+          if (typeof console !== "undefined" && typeof console.warn === "function") {
+            console.warn("Theme bootstrap skipped", error);
+          }
+        }
+      })();
+    </script>
+    <link data-trunk rel="css" href="styles.css" />
+    <link data-trunk rel="copy-file" href="resume.pdf" />
+    <link data-trunk rel="copy-dir" href="previews" />
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
