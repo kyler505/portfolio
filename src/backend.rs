@@ -10,7 +10,7 @@ use reqwest::{header::LOCATION, redirect::Policy};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -21,7 +21,7 @@ use tokio::{
     time::{timeout, Instant},
 };
 use tower_http::services::{ServeDir, ServeFile};
-use url::Url;
+use url::{Host, Url};
 
 const PREVIEW_CACHE_TTL_SECONDS: u64 = 300;
 const PREVIEW_CACHE_MAX_ENTRIES: usize = 256;
@@ -30,6 +30,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_REDIRECTS: usize = 4;
+const MAX_RESOLVED_IP_ATTEMPTS: usize = 3;
 const USER_AGENT: &str = "portfolio-preview-bot/1.0";
 
 #[derive(Clone)]
@@ -181,7 +182,7 @@ async fn write_to_cache(state: &AppState, key: String, value: PreviewPayload) {
 
     purge_expired_entries(&mut cache, now);
 
-    if cache.len() >= PREVIEW_CACHE_MAX_ENTRIES {
+    if !cache.contains_key(&key) && cache.len() >= PREVIEW_CACHE_MAX_ENTRIES {
         evict_oldest_entry(&mut cache);
     }
 
@@ -228,17 +229,25 @@ fn ensure_url_shape_is_allowed(url: &Url) -> Result<(), &'static str> {
         return Err("local addresses are not allowed");
     }
 
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_disallowed_ip(ip) {
-            return Err("host address is blocked");
+    match url.host() {
+        Some(Host::Ipv4(ipv4)) => {
+            if is_disallowed_ip(IpAddr::V4(ipv4)) {
+                return Err("host address is blocked");
+            }
         }
+        Some(Host::Ipv6(ipv6)) => {
+            if is_disallowed_ip(IpAddr::V6(ipv6)) {
+                return Err("host address is blocked");
+            }
+        }
+        _ => {}
     }
 
     Ok(())
 }
 
 fn is_disallowed_ip(ip: IpAddr) -> bool {
-    match ip {
+    match normalize_ip_for_policy(ip) {
         IpAddr::V4(v4) => {
             v4.is_private()
                 || v4.is_loopback()
@@ -257,6 +266,13 @@ fn is_disallowed_ip(ip: IpAddr) -> bool {
                 || v6.is_multicast()
                 || is_documentation_ipv6(v6)
         }
+    }
+}
+
+fn normalize_ip_for_policy(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+        IpAddr::V4(v4) => IpAddr::V4(v4),
     }
 }
 
@@ -326,36 +342,62 @@ async fn send_pinned_request(target_url: &Url) -> Result<reqwest::Response, &'st
     let host = target_url.host_str().ok_or("URL host is required")?;
     let host_port = target_url.port_or_known_default().ok_or("URL port is required")?;
 
+    if host.parse::<IpAddr>().is_ok() {
+        let client = build_preview_client(None)?;
+        return client
+            .get(target_url.clone())
+            .send()
+            .await
+            .map_err(|_| "failed to fetch URL");
+    }
+
+    let resolved_ips = resolve_and_validate_host(host, host_port).await?;
+
+    for pinned_ip in resolved_ips.into_iter().take(MAX_RESOLVED_IP_ATTEMPTS) {
+        let pinned_socket = SocketAddr::new(pinned_ip, host_port);
+        let client = build_preview_client(Some((host, pinned_socket)))?;
+
+        match client.get(target_url.clone()).send().await {
+            Ok(response) => return Ok(response),
+            Err(_) => continue,
+        }
+    }
+
+    Err("failed to fetch URL")
+}
+
+fn build_preview_client(
+    resolved_host: Option<(&str, SocketAddr)>,
+) -> Result<reqwest::Client, &'static str> {
     let mut client_builder = reqwest::Client::builder()
         .redirect(Policy::none())
         .timeout(REQUEST_TIMEOUT)
         .connect_timeout(CONNECT_TIMEOUT)
         .user_agent(USER_AGENT);
 
-    if host.parse::<IpAddr>().is_err() {
-        let pinned_ip = resolve_and_validate_host(host, host_port).await?;
-        let pinned_socket = SocketAddr::new(pinned_ip, host_port);
+    if let Some((host, pinned_socket)) = resolved_host {
         client_builder = client_builder.resolve(host, pinned_socket);
     }
 
-    let client = client_builder
+    client_builder
         .build()
-        .map_err(|_| "failed to prepare request client")?;
-
-    client
-        .get(target_url.clone())
-        .send()
-        .await
-        .map_err(|_| "failed to fetch URL")
+        .map_err(|_| "failed to prepare request client")
 }
 
-async fn resolve_and_validate_host(host: &str, port: u16) -> Result<IpAddr, &'static str> {
+async fn resolve_and_validate_host(host: &str, port: u16) -> Result<Vec<IpAddr>, &'static str> {
     let resolved_hosts = timeout(DNS_LOOKUP_TIMEOUT, lookup_host((host, port)))
         .await
         .map_err(|_| "host lookup timed out")?
         .map_err(|_| "unable to resolve host")?;
 
-    let mut selected_ip: Option<IpAddr> = None;
+    collect_validated_resolved_ips(resolved_hosts)
+}
+
+fn collect_validated_resolved_ips(
+    resolved_hosts: impl IntoIterator<Item = SocketAddr>,
+) -> Result<Vec<IpAddr>, &'static str> {
+    let mut selected_ips: Vec<IpAddr> = Vec::new();
+    let mut seen_ips: HashSet<IpAddr> = HashSet::new();
 
     for socket in resolved_hosts {
         let ip = socket.ip();
@@ -364,12 +406,16 @@ async fn resolve_and_validate_host(host: &str, port: u16) -> Result<IpAddr, &'st
             return Err("host address is blocked");
         }
 
-        if selected_ip.is_none() {
-            selected_ip = Some(ip);
+        if seen_ips.insert(ip) {
+            selected_ips.push(ip);
         }
     }
 
-    selected_ip.ok_or("unable to resolve host")
+    if selected_ips.is_empty() {
+        return Err("unable to resolve host");
+    }
+
+    Ok(selected_ips)
 }
 
 #[cfg(test)]
@@ -392,6 +438,79 @@ mod tests {
 
         let result = ensure_url_shape_is_allowed(&blocked);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn blocked_ipv4_mapped_ipv6_target_is_rejected() {
+        let blocked = Url::parse("http://[::ffff:127.0.0.1]/private").expect("valid URL");
+
+        let result = ensure_url_shape_is_allowed(&blocked);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn cache_overwrite_at_capacity_does_not_evict_oldest() {
+        let state = AppState {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let now = Instant::now();
+
+        {
+            let mut cache = state.cache.write().await;
+
+            for index in 0..PREVIEW_CACHE_MAX_ENTRIES {
+                let key = format!("key-{index}");
+                cache.insert(
+                    key,
+                    CacheEntry {
+                        created_at: now + Duration::from_secs(index as u64),
+                        expires_at: now + Duration::from_secs(10_000),
+                        value: PreviewPayload {
+                            ok: true,
+                            url: Some("https://example.com".to_string()),
+                            title: Some("title".to_string()),
+                            description: None,
+                            image: None,
+                            error: None,
+                        },
+                    },
+                );
+            }
+        }
+
+        write_to_cache(
+            &state,
+            "key-10".to_string(),
+            PreviewPayload {
+                ok: true,
+                url: Some("https://example.com/updated".to_string()),
+                title: Some("updated".to_string()),
+                description: None,
+                image: None,
+                error: None,
+            },
+        )
+        .await;
+
+        let cache = state.cache.read().await;
+        assert_eq!(cache.len(), PREVIEW_CACHE_MAX_ENTRIES);
+        assert!(cache.contains_key("key-0"));
+        assert_eq!(
+            cache.get("key-10").and_then(|entry| entry.value.title.as_deref()),
+            Some("updated")
+        );
+    }
+
+    #[test]
+    fn collect_validated_resolved_ips_returns_multiple_unique_public_ips() {
+        let resolved = vec![
+            SocketAddr::new("93.184.216.34".parse().expect("valid ip"), 80),
+            SocketAddr::new("2606:2800:220:1:248:1893:25c8:1946".parse().expect("valid ip"), 80),
+            SocketAddr::new("93.184.216.34".parse().expect("valid ip"), 80),
+        ];
+
+        let ips = collect_validated_resolved_ips(resolved).expect("public addresses should pass");
+        assert_eq!(ips.len(), 2);
     }
 }
 
