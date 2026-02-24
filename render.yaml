@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: portfolio
+    env: rust
+    plan: free
+    buildCommand: |
+      rustup target add wasm32-unknown-unknown
+      cargo install trunk --locked
+      trunk build --release
+      cargo build --release
+    startCommand: ./target/release/portfolio
+    healthCheckPath: /
+    envVars:
+      - key: RUST_LOG
+        value: info
+      - key: PREVIEW_CACHE_TTL_SECONDS
+        value: "300"
+      - key: PREVIEW_CACHE_MAX_ENTRIES
+        value: "256"
+      - key: PREVIEW_RESPONSE_MAX_BYTES
+        value: "524288"
+      - key: PREVIEW_REQUEST_TIMEOUT_SECONDS
+        value: "6"
+      - key: PREVIEW_CONNECT_TIMEOUT_SECONDS
+        value: "3"
+      - key: PREVIEW_DNS_LOOKUP_TIMEOUT_SECONDS
+        value: "2"
+      - key: PREVIEW_MAX_REDIRECTS
+        value: "4"
+      - key: PREVIEW_MAX_RESOLVED_IP_ATTEMPTS
+        value: "3"
