@@ -584,7 +584,16 @@ mod tests {
     async fn cache_overwrite_at_capacity_does_not_evict_oldest() {
         let state = AppState {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            config: PreviewRuntimeConfig::from_env(),
+            config: PreviewRuntimeConfig {
+                cache_ttl_seconds: DEFAULT_PREVIEW_CACHE_TTL_SECONDS,
+                cache_max_entries: DEFAULT_PREVIEW_CACHE_MAX_ENTRIES,
+                response_max_bytes: DEFAULT_PREVIEW_RESPONSE_MAX_BYTES,
+                request_timeout: Duration::from_millis(DEFAULT_PREVIEW_REQUEST_TIMEOUT_MS),
+                connect_timeout: Duration::from_millis(DEFAULT_PREVIEW_CONNECT_TIMEOUT_MS),
+                dns_lookup_timeout: Duration::from_millis(DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS),
+                max_redirects: DEFAULT_PREVIEW_MAX_REDIRECTS,
+                max_resolved_ip_attempts: DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS,
+            },
         };
         let now = Instant::now();
 
