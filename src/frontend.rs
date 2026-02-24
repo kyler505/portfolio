@@ -15,6 +15,7 @@ const PREVIEW_CURSOR_OFFSET_X: f64 = 14.0;
 const PREVIEW_CURSOR_OFFSET_Y: f64 = 12.0;
 const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
 const PREVIEW_DEFAULT_ALT: &str = "Project preview";
+const PREVIEW_FAILURE_RETRY_MS: f64 = 10_000.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Theme {
@@ -250,6 +251,13 @@ struct ApiPreviewData {
     image: Option<String>,
 }
 
+#[derive(Clone)]
+enum PreviewCacheEntry {
+    Ready(ApiPreviewData),
+    Pending,
+    Failed { retry_after_ms: f64 },
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ApiPreviewResponse {
@@ -307,27 +315,51 @@ fn apply_remote_preview(
 
 fn hydrate_preview(
     preview_card: &UseStateHandle<PreviewCardState>,
-    preview_cache: &UseStateHandle<HashMap<String, Option<ApiPreviewData>>>,
+    preview_cache: &UseStateHandle<HashMap<String, PreviewCacheEntry>>,
     metadata_url: &str,
 ) {
-    if let Some(cached) = preview_cache.get(metadata_url).cloned().flatten() {
-        apply_remote_preview(preview_card, metadata_url, &cached);
-        return;
-    }
-
-    if preview_cache.contains_key(metadata_url) {
-        return;
+    if let Some(cached_entry) = preview_cache.get(metadata_url) {
+        match cached_entry {
+            PreviewCacheEntry::Ready(cached) => {
+                apply_remote_preview(preview_card, metadata_url, cached);
+                return;
+            }
+            PreviewCacheEntry::Pending => return,
+            PreviewCacheEntry::Failed { retry_after_ms } => {
+                if js_sys::Date::now() < *retry_after_ms {
+                    return;
+                }
+            }
+        }
     }
 
     let metadata_url = metadata_url.to_string();
     let preview_card_handle = preview_card.clone();
     let preview_cache_handle = preview_cache.clone();
 
+    {
+        let mut next_cache = (**preview_cache).clone();
+        next_cache.insert(metadata_url.clone(), PreviewCacheEntry::Pending);
+        preview_cache.set(next_cache);
+    }
+
     spawn_local(async move {
         let remote = fetch_preview(&metadata_url).await;
 
         let mut next_cache = (*preview_cache_handle).clone();
-        next_cache.insert(metadata_url.clone(), remote.clone());
+        match remote.as_ref() {
+            Some(payload) => {
+                next_cache.insert(metadata_url.clone(), PreviewCacheEntry::Ready(payload.clone()));
+            }
+            None => {
+                next_cache.insert(
+                    metadata_url.clone(),
+                    PreviewCacheEntry::Failed {
+                        retry_after_ms: js_sys::Date::now() + PREVIEW_FAILURE_RETRY_MS,
+                    },
+                );
+            }
+        }
         preview_cache_handle.set(next_cache);
 
         if let Some(remote) = remote.as_ref() {
@@ -415,7 +447,7 @@ fn external_link(props: &ExternalLinkProps) -> Html {
 fn app() -> Html {
     let theme = use_state(resolve_theme);
     let preview_card = use_state(PreviewCardState::hidden);
-    let preview_cache = use_state(HashMap::<String, Option<ApiPreviewData>>::new);
+    let preview_cache = use_state(HashMap::<String, PreviewCacheEntry>::new);
 
     {
         let current = *theme;

@@ -6,29 +6,40 @@ use axum::{
     Json, Router,
 };
 use futures_util::StreamExt;
-use reqwest::redirect::Policy;
+use reqwest::{header::LOCATION, redirect::Policy};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::IpAddr, sync::Arc, time::Duration};
-use tokio::{net::lookup_host, sync::RwLock, time::Instant};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    net::lookup_host,
+    sync::RwLock,
+    time::{timeout, Instant},
+};
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 const PREVIEW_CACHE_TTL_SECONDS: u64 = 300;
+const PREVIEW_CACHE_MAX_ENTRIES: usize = 256;
 const RESPONSE_MAX_BYTES: usize = 512 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_REDIRECTS: usize = 4;
 const USER_AGENT: &str = "portfolio-preview-bot/1.0";
 
 #[derive(Clone)]
 pub struct AppState {
-    http_client: reqwest::Client,
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
 }
 
 #[derive(Clone)]
 struct CacheEntry {
+    created_at: Instant,
     expires_at: Instant,
     value: PreviewPayload,
 }
@@ -75,12 +86,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let bind_address = format!("0.0.0.0:{port}");
 
     let state = AppState {
-        http_client: reqwest::Client::builder()
-            .redirect(Policy::limited(MAX_REDIRECTS))
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .user_agent(USER_AGENT)
-            .build()?,
         cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
@@ -122,7 +127,7 @@ async fn get_preview(
         );
     }
 
-    let fetched = match fetch_preview_payload(&state.http_client, parsed_url).await {
+    let fetched = match fetch_preview_payload(parsed_url).await {
         Ok(payload) => payload,
         Err(error_message) => {
             return json_response(
@@ -155,58 +160,76 @@ fn cache_control(value: &str) -> HeaderValue {
 
 async fn read_from_cache(state: &AppState, key: &str) -> Option<PreviewPayload> {
     let now = Instant::now();
-    let cache = state.cache.read().await;
-    let entry = cache.get(key)?;
+    {
+        let cache = state.cache.read().await;
+        let entry = cache.get(key)?;
 
-    if entry.expires_at <= now {
-        return None;
+        if entry.expires_at > now {
+            return Some(entry.value.clone());
+        }
     }
 
-    Some(entry.value.clone())
+    let mut cache = state.cache.write().await;
+    purge_expired_entries(&mut cache, now);
+    cache.remove(key);
+    None
 }
 
 async fn write_to_cache(state: &AppState, key: String, value: PreviewPayload) {
+    let now = Instant::now();
     let mut cache = state.cache.write().await;
+
+    purge_expired_entries(&mut cache, now);
+
+    if cache.len() >= PREVIEW_CACHE_MAX_ENTRIES {
+        evict_oldest_entry(&mut cache);
+    }
+
     cache.insert(
         key,
         CacheEntry {
-            expires_at: Instant::now() + Duration::from_secs(PREVIEW_CACHE_TTL_SECONDS),
+            created_at: now,
+            expires_at: now + Duration::from_secs(PREVIEW_CACHE_TTL_SECONDS),
             value,
         },
     );
 }
 
+fn purge_expired_entries(cache: &mut HashMap<String, CacheEntry>, now: Instant) {
+    cache.retain(|_, entry| entry.expires_at > now);
+}
+
+fn evict_oldest_entry(cache: &mut HashMap<String, CacheEntry>) {
+    let Some(key_to_remove) = cache
+        .iter()
+        .min_by_key(|(_, entry)| entry.created_at)
+        .map(|(key, _)| key.clone())
+    else {
+        return;
+    };
+
+    cache.remove(&key_to_remove);
+}
+
 async fn parse_preview_url(raw_url: &str) -> Result<Url, &'static str> {
     let parsed = Url::parse(raw_url).map_err(|_| "invalid URL")?;
 
-    if !(parsed.scheme() == "http" || parsed.scheme() == "https") {
+    ensure_url_shape_is_allowed(&parsed)?;
+    Ok(parsed)
+}
+
+fn ensure_url_shape_is_allowed(url: &Url) -> Result<(), &'static str> {
+    if !(url.scheme() == "http" || url.scheme() == "https") {
         return Err("URL scheme must be http or https");
     }
 
-    let host = parsed.host_str().ok_or("URL host is required")?;
+    let host = url.host_str().ok_or("URL host is required")?;
     if host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost") {
         return Err("local addresses are not allowed");
     }
 
-    ensure_host_is_safe(host, parsed.port_or_known_default()).await?;
-    Ok(parsed)
-}
-
-async fn ensure_host_is_safe(host: &str, port: Option<u16>) -> Result<(), &'static str> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_disallowed_ip(ip) {
-            return Err("host address is blocked");
-        }
-        return Ok(());
-    }
-
-    let resolved_port = port.unwrap_or(80);
-    let resolved_hosts = lookup_host((host, resolved_port))
-        .await
-        .map_err(|_| "unable to resolve host")?;
-
-    for socket in resolved_hosts {
-        if is_disallowed_ip(socket.ip()) {
             return Err("host address is blocked");
         }
     }
@@ -242,36 +265,134 @@ fn is_documentation_ipv6(ip: std::net::Ipv6Addr) -> bool {
     segments[0] == 0x2001 && segments[1] == 0x0db8
 }
 
-async fn fetch_preview_payload(
-    client: &reqwest::Client,
-    target_url: Url,
-) -> Result<PreviewPayload, &'static str> {
-    let response = client
-        .get(target_url)
+async fn fetch_preview_payload(target_url: Url) -> Result<PreviewPayload, &'static str> {
+    let mut current_url = target_url;
+
+    for hop in 0..=MAX_REDIRECTS {
+        let response = send_pinned_request(&current_url).await?;
+
+        if response.status().is_redirection() {
+            if hop == MAX_REDIRECTS {
+                return Err("too many redirects");
+            }
+
+            let next_url = parse_and_validate_redirect_target(&current_url, &response).await?;
+            current_url = next_url;
+            continue;
+        }
+
+        if !response.status().is_success() {
+            return Err("received non-success response");
+        }
+
+        let body = read_limited_body(response).await?;
+        let metadata = extract_metadata(&body, &current_url);
+
+        return Ok(PreviewPayload {
+            ok: true,
+            url: Some(current_url.to_string()),
+            title: metadata.title,
+            description: metadata.description,
+            image: metadata.image,
+            error: None,
+        });
+    }
+
+    Err("too many redirects")
+}
+
+async fn parse_and_validate_redirect_target(
+    current_url: &Url,
+    response: &reqwest::Response,
+) -> Result<Url, &'static str> {
+    let location = response
+        .headers()
+        .get(LOCATION)
+        .ok_or("received redirect without location")?;
+    let location_value = location
+        .to_str()
+        .map_err(|_| "received invalid redirect location")?;
+    let next_url = current_url
+        .join(location_value)
+        .map_err(|_| "received invalid redirect location")?;
+
+    ensure_url_shape_is_allowed(&next_url)?;
+    Ok(next_url)
+}
+
+async fn send_pinned_request(target_url: &Url) -> Result<reqwest::Response, &'static str> {
+    ensure_url_shape_is_allowed(target_url)?;
+
+    let host = target_url.host_str().ok_or("URL host is required")?;
+    let host_port = target_url.port_or_known_default().ok_or("URL port is required")?;
+
+    let mut client_builder = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .user_agent(USER_AGENT);
+
+    if host.parse::<IpAddr>().is_err() {
+        let pinned_ip = resolve_and_validate_host(host, host_port).await?;
+        let pinned_socket = SocketAddr::new(pinned_ip, host_port);
+        client_builder = client_builder.resolve(host, pinned_socket);
+    }
+
+    let client = client_builder
+        .build()
+        .map_err(|_| "failed to prepare request client")?;
+
+    client
+        .get(target_url.clone())
         .send()
         .await
-        .map_err(|_| "failed to fetch URL")?;
+        .map_err(|_| "failed to fetch URL")
+}
 
-    if !response.status().is_success() {
-        return Err("received non-success response");
+async fn resolve_and_validate_host(host: &str, port: u16) -> Result<IpAddr, &'static str> {
+    let resolved_hosts = timeout(DNS_LOOKUP_TIMEOUT, lookup_host((host, port)))
+        .await
+        .map_err(|_| "host lookup timed out")?
+        .map_err(|_| "unable to resolve host")?;
+
+    let mut selected_ip: Option<IpAddr> = None;
+
+    for socket in resolved_hosts {
+        let ip = socket.ip();
+
+        if is_disallowed_ip(ip) {
+            return Err("host address is blocked");
+        }
+
+        if selected_ip.is_none() {
+            selected_ip = Some(ip);
+        }
     }
 
-    let final_url = response.url().clone();
-    if let Some(host) = final_url.host_str() {
-        ensure_host_is_safe(host, final_url.port_or_known_default()).await?;
+    selected_ip.ok_or("unable to resolve host")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn redirect_target_resolves_relative_location() {
+        let current = Url::parse("http://93.184.216.34/start").expect("valid URL");
+
+        let redirected = current
+            .join("/next")
+            .expect("relative redirect resolves");
+        ensure_url_shape_is_allowed(&redirected).expect("public redirect target should be allowed");
     }
 
-    let body = read_limited_body(response).await?;
-    let metadata = extract_metadata(&body, &final_url);
+    #[test]
+    fn blocked_private_target_is_rejected() {
+        let blocked = Url::parse("http://127.0.0.1/private").expect("valid URL");
 
-    Ok(PreviewPayload {
-        ok: true,
-        url: Some(final_url.to_string()),
-        title: metadata.title,
-        description: metadata.description,
-        image: metadata.image,
-        error: None,
-    })
+        let result = ensure_url_shape_is_allowed(&blocked);
+        assert!(result.is_err());
+    }
 }
 
 async fn read_limited_body(response: reqwest::Response) -> Result<String, &'static str> {
