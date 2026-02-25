@@ -322,23 +322,13 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "energy drinks consumed (1/weekday)",
+                label: "energy drinks consumed this year",
             },
             Metric {
                 value: AttrValue::from(COMMITS_THIS_MONTH_FALLBACK),
                 label: "commits this month",
             },
         ]
-    }
-
-    fn next_metric_for_label(current_label: &str) -> Metric {
-        let metrics = current_metrics();
-        let current_index = metrics
-            .iter()
-            .position(|metric| metric.label == current_label)
-            .unwrap_or(0);
-        let next_index = (current_index + 1) % metrics.len();
-        metrics[next_index].clone()
     }
 
     fn viewport_size() -> (f64, f64) {
@@ -560,6 +550,7 @@ mod frontend {
     fn app() -> Html {
         let theme = use_state(resolve_theme);
         let active_metric = use_state(|| current_metrics()[0].clone());
+        let metric_cursor = use_mut_ref(|| 0usize);
         let preview_card = use_state(PreviewCardState::hidden);
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
@@ -585,14 +576,26 @@ mod frontend {
 
         {
             let active_metric = active_metric.clone();
+            let metric_cursor = metric_cursor.clone();
             use_effect_with((), move |_| {
                 let mut interval_id = None;
                 let mut callback = None;
 
                 if let Some(win) = window() {
                     let tick = Closure::<dyn FnMut()>::new(move || {
-                        let next_metric = next_metric_for_label((*active_metric).label);
-                        active_metric.set(next_metric);
+                        let metrics = current_metrics();
+                        let len = metrics.len();
+                        if len == 0 {
+                            return;
+                        }
+
+                        let next_index = {
+                            let mut cursor = metric_cursor.borrow_mut();
+                            *cursor = (*cursor + 1) % len;
+                            *cursor
+                        };
+
+                        active_metric.set(metrics[next_index].clone());
                     });
 
                     interval_id = win
