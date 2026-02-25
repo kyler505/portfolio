@@ -17,6 +17,8 @@ services:
         value: http://screenshot-worker:10000
       - key: SCREENSHOT_WORKER_TIMEOUT_MS
         value: "8000"
+      - key: SCREENSHOT_WORKER_TOKEN
+        sync: false
       - key: PREVIEW_CACHE_TTL_SECONDS
         value: "300"
       - key: PREVIEW_CACHE_MAX_ENTRIES
@@ -46,3 +48,7 @@ services:
     envVars:
       - key: CAPTURE_TIMEOUT_MS
         value: "8000"
+      - key: SCREENSHOT_WORKER_TOKEN
+        sync: false
+      - key: DNS_LOOKUP_TIMEOUT_MS
+        value: "2000"

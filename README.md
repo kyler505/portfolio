@@ -68,7 +68,10 @@ SCREENSHOT_WORKER_URL=http://127.0.0.1:3001 cargo run --release
 `/capture` in `screenshot-worker/server.js` mirrors SSRF-safe URL checks:
 - only allows `http`/`https`,
 - blocks localhost and private/link-local/loopback/multicast/documentation targets,
-- resolves DNS and rejects blocked resolved addresses before Playwright navigation.
+- applies explicit DNS lookup timeouts during hostname validation,
+- validates every Playwright network request with `page.route("**/*")` before it is allowed,
+- enforces main-frame document navigation to remain on the original hostname (redirects to other hosts are blocked),
+- aborts requests fail-closed when URL validation is uncertain or invalid.
 
 ## Verification commands
 
@@ -93,7 +96,8 @@ Environment variables:
 - `RUST_LOG` is included for runtime log level control.
 - `SCREENSHOT_WORKER_URL` points backend fallback calls to `http://screenshot-worker:10000` in Render.
 - `SCREENSHOT_WORKER_TIMEOUT_MS` controls screenshot worker request timeout.
-- `SCREENSHOT_WORKER_TOKEN` is optional. If set on both services, backend sends `Authorization: Bearer <token>`.
+- `SCREENSHOT_WORKER_TOKEN` is required in the blueprint for both services (configured with `sync: false` placeholders); backend sends `Authorization: Bearer <token>` and the worker rejects missing/invalid tokens.
+- `DNS_LOOKUP_TIMEOUT_MS` controls worker DNS resolution timeout for SSRF host validation.
 - `PREVIEW_*` values are included as deploy-time placeholders for preview API tuning defaults.
   - Current runtime defaults are defined in `src/backend.rs` constants.
 

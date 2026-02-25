@@ -6,10 +6,12 @@ const { chromium } = require("playwright");
 
 const DEFAULT_PORT = 3001;
 const DEFAULT_CAPTURE_TIMEOUT_MS = 8000;
+const DEFAULT_DNS_LOOKUP_TIMEOUT_MS = 2000;
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1366, height: 768 });
 
 const port = readBoundedInt("PORT", DEFAULT_PORT, 1, 65535);
 const captureTimeoutMs = readBoundedInt("CAPTURE_TIMEOUT_MS", DEFAULT_CAPTURE_TIMEOUT_MS, 1000, 120000);
+const dnsLookupTimeoutMs = readBoundedInt("DNS_LOOKUP_TIMEOUT_MS", DEFAULT_DNS_LOOKUP_TIMEOUT_MS, 100, 30000);
 const workerToken = readOptionalString("SCREENSHOT_WORKER_TOKEN");
 
 let browserPromise;
@@ -175,6 +177,31 @@ function readBearerToken(req) {
 }
 
 async function validateTargetUrl(rawUrl) {
+  return validateTargetUrlWithPolicy(rawUrl, null);
+}
+
+function withLookupTimeout(host) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      const timeoutError = new Error(`dns lookup timed out for ${host}`);
+      timeoutError.code = "DNS_LOOKUP_TIMEOUT";
+      reject(timeoutError);
+    }, dnsLookupTimeoutMs);
+
+    dns
+      .lookup(host, { all: true, verbatim: true })
+      .then((records) => {
+        clearTimeout(timeoutId);
+        resolve(records);
+      })
+      .catch((error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
+}
+
+async function validateTargetUrlWithPolicy(rawUrl, requiredMainFrameHost) {
   let parsed;
   try {
     parsed = new URL(rawUrl);
@@ -191,6 +218,10 @@ async function validateTargetUrl(rawUrl) {
     return { error: "local addresses are not allowed" };
   }
 
+  if (requiredMainFrameHost && host !== requiredMainFrameHost) {
+    return { error: "main-frame redirects must remain on the original host" };
+  }
+
   if (net.isIP(host)) {
     if (isBlockedIp(host)) {
       return { error: "host address is blocked" };
@@ -201,8 +232,12 @@ async function validateTargetUrl(rawUrl) {
 
   let resolved;
   try {
-    resolved = await dns.lookup(host, { all: true, verbatim: true });
-  } catch {
+    resolved = await withLookupTimeout(host);
+  } catch (error) {
+    if (error && error.code === "DNS_LOOKUP_TIMEOUT") {
+      return { error: "DNS lookup timed out" };
+    }
+
     return { error: "unable to resolve host" };
   }
 
@@ -219,6 +254,32 @@ async function validateTargetUrl(rawUrl) {
   return { value: parsed };
 }
 
+async function validateRequestUrl(rawUrl, requiredMainFrameHost) {
+  try {
+    const validation = await validateTargetUrlWithPolicy(rawUrl, requiredMainFrameHost);
+    return validation;
+  } catch {
+    return { error: "unable to validate request URL" };
+  }
+}
+
+async function abortRoute(route) {
+  try {
+    await route.abort("blockedbyclient");
+  } catch {
+    // Ignore already-handled route failures.
+  }
+}
+
+function isMainFrameDocumentNavigation(request) {
+  if (!request.isNavigationRequest() || request.resourceType() !== "document") {
+    return false;
+  }
+
+  const frame = request.frame();
+  return frame.parentFrame() === null;
+}
+
 async function getBrowser() {
   if (!browserPromise) {
     browserPromise = chromium.launch({
@@ -233,9 +294,26 @@ async function getBrowser() {
 async function captureScreenshotAsDataUrl(targetUrl) {
   const browser = await getBrowser();
   const context = await browser.newContext({ viewport: DEFAULT_VIEWPORT });
+  const mainFrameHost = targetUrl.hostname.toLowerCase();
 
   try {
     const page = await context.newPage();
+    await page.route("**/*", async (route) => {
+      try {
+        const request = route.request();
+        const requiredMainFrameHost = isMainFrameDocumentNavigation(request) ? mainFrameHost : null;
+        const validation = await validateRequestUrl(request.url(), requiredMainFrameHost);
+        if (validation.error) {
+          await abortRoute(route);
+          return;
+        }
+
+        await route.continue();
+      } catch {
+        await abortRoute(route);
+      }
+    });
+
     page.setDefaultNavigationTimeout(captureTimeoutMs);
     await page.goto(targetUrl.toString(), {
       timeout: captureTimeoutMs,
