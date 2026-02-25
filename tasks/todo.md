@@ -206,3 +206,39 @@
 - Added recoverable log event `preview_metadata_fetch_failed_recoverable` (`error_class:"metadata_fetch_failed_recoverable"`) instead of terminal `preview_request_failed` for upstream metadata failures.
 - Added targeted backend tests validating that metadata failures still execute fallback and keep `ok:true` even when screenshot fallback cannot produce an image.
 - Verified runtime with `https://example.invalid` returning `200`/`ok:true` minimal payload and structured logs showing recoverable metadata failure + screenshot fallback branch.
+
+## 2026-02-25 production build metric/theme regression
+- [x] Restate goal + acceptance criteria
+- [x] Reproduce dev vs release behavior and capture runtime console evidence
+- [x] Inspect `src/main.rs` theme toggle + metric logic for production/browser compatibility issues
+- [x] Implement minimal robust fix for theme toggle and metric cycling
+- [x] Run verification (`cargo check --target wasm32-unknown-unknown`, `trunk build --release`)
+- [x] Summarize root cause, code changes, and verification evidence
+
+### Acceptance Criteria
+- Identify a concrete production-only failure mode tied to theme toggle and/or metric timer behavior.
+- Apply the smallest safe code change that keeps theme switching functional across browsers and build modes.
+- Ensure metrics visibly cycle in release output without leaking timers.
+- Verification commands complete successfully.
+
+### Results
+- Reproduced release/dev startup and used browser automation to verify runtime behavior and console state after interactions.
+- Identified browser-compatibility risk in theme toggle logic (`startViewTransition` callback lifetime) and removed that brittle path so toggling always applies synchronously.
+- Added explicit metric rotation state + interval effect with cleanup so metrics continue cycling in optimized release builds.
+- Verified with `cargo check --target wasm32-unknown-unknown`, `trunk build --release`, and browser checks on both `trunk serve` and `trunk serve --release`.
+
+## 2026-02-25 dynamic rotating metrics + production validation
+- [x] Restate goal + acceptance criteria
+- [x] Read current metric/theme implementation and deployment config
+- [x] Implement four-metric dynamic rotation with safe fallbacks
+- [x] Keep theme toggle apply/persist path reliable in release
+- [x] Run verification (`cargo check --target wasm32-unknown-unknown`, `trunk build --release`)
+- [ ] Commit and push to `main`
+- [ ] Verify deployed Render site metric rotation + theme persistence
+
+### Acceptance Criteria
+- Metric rotation cycles exactly: Wasm heap size, College Station local time, weekday-based energy drinks since 2026-01-12, commits this month.
+- Browser/JS API failures degrade to safe values without panics.
+- Theme toggle keeps working in production and persists across reload.
+- Local release checks pass and changes are pushed to `origin/main`.
+- Production verification includes deployed URL and observed metric/theme behavior evidence.

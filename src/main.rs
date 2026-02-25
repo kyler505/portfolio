@@ -10,6 +10,9 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod frontend {
+    use std::{cell::Cell, rc::Rc};
+
+    use js_sys::{ArrayBuffer, Function, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
     use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
     use yew::prelude::*;
@@ -26,21 +29,10 @@ mod frontend {
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
-
-    const METRICS: [Metric; 3] = [
-        Metric {
-            value: "2027",
-            label: "expected graduation year",
-        },
-        Metric {
-            value: "150+",
-            label: "monthly orders supported at TechHub",
-        },
-        Metric {
-            value: "3",
-            label: "production-facing projects shipped recently",
-        },
-    ];
+    const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
+    const ENERGY_START_YEAR: i32 = 2026;
+    const ENERGY_START_MONTH: u32 = 1;
+    const ENERGY_START_DAY: u32 = 12;
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -54,10 +46,17 @@ mod frontend {
         Dark,
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, PartialEq, Eq)]
     struct Metric {
-        value: &'static str,
+        value: AttrValue,
         label: &'static str,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    struct SimpleDate {
+        year: i32,
+        month: u32,
+        day: u32,
     }
 
     impl Theme {
@@ -138,6 +137,200 @@ mod frontend {
         if let Some(storage) = local_storage() {
             let _ = storage.set_item(THEME_KEY, theme.as_str());
         }
+    }
+
+    fn js_eval_string(source: &str) -> Option<String> {
+        let evaluator = Function::new_no_args(source);
+        evaluator
+            .call0(&wasm_bindgen::JsValue::NULL)
+            .ok()?
+            .as_string()
+    }
+
+    fn formatted_college_station_time() -> String {
+        js_eval_string(
+            "try {
+                return new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Chicago',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                }).format(new Date());
+            } catch (_) {
+                return null;
+            }",
+        )
+        .unwrap_or_else(|| "time unavailable".to_owned())
+    }
+
+    fn chicago_iso_date() -> Option<SimpleDate> {
+        let iso = js_eval_string(
+            "try {
+                return new Intl.DateTimeFormat('en-CA', {
+                    timeZone: 'America/Chicago',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }).format(new Date());
+            } catch (_) {
+                return null;
+            }",
+        )
+        .or_else(|| {
+            let now = js_sys::Date::new_0();
+            let year = now.get_utc_full_year();
+            let month = now.get_utc_month() + 1;
+            let day = now.get_utc_date();
+            Some(format!("{year:04}-{month:02}-{day:02}"))
+        })?;
+
+        let mut parts = iso.split('-');
+        let year = parts.next()?.parse::<i32>().ok()?;
+        let month = parts.next()?.parse::<u32>().ok()?;
+        let day = parts.next()?.parse::<u32>().ok()?;
+        if !(1..=12).contains(&month) {
+            return None;
+        }
+        let max_day = days_in_month(year, month);
+        if day == 0 || day > max_day {
+            return None;
+        }
+
+        Some(SimpleDate { year, month, day })
+    }
+
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    }
+
+    fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if is_leap_year(year) => 29,
+            2 => 28,
+            _ => 30,
+        }
+    }
+
+    fn next_day(date: SimpleDate) -> SimpleDate {
+        let max_day = days_in_month(date.year, date.month);
+        if date.day < max_day {
+            return SimpleDate {
+                day: date.day + 1,
+                ..date
+            };
+        }
+
+        if date.month < 12 {
+            return SimpleDate {
+                year: date.year,
+                month: date.month + 1,
+                day: 1,
+            };
+        }
+
+        SimpleDate {
+            year: date.year + 1,
+            month: 1,
+            day: 1,
+        }
+    }
+
+    fn day_offset(start: SimpleDate, end: SimpleDate) -> Option<u32> {
+        if end < start {
+            return None;
+        }
+
+        let mut cursor = start;
+        let mut days: u32 = 0;
+        while cursor < end {
+            cursor = next_day(cursor);
+            days = days.checked_add(1)?;
+        }
+        Some(days)
+    }
+
+    fn weekdays_since_energy_start() -> u32 {
+        let start = SimpleDate {
+            year: ENERGY_START_YEAR,
+            month: ENERGY_START_MONTH,
+            day: ENERGY_START_DAY,
+        };
+        let Some(today) = chicago_iso_date() else {
+            return 0;
+        };
+        let Some(offset) = day_offset(start, today) else {
+            return 0;
+        };
+
+        let total_days = offset + 1;
+        let full_weeks = total_days / 7;
+        let remainder = total_days % 7;
+        let mut weekdays = full_weeks * 5;
+        let mut i = 0;
+        while i < remainder {
+            if i < 5 {
+                weekdays += 1;
+            }
+            i += 1;
+        }
+        weekdays
+    }
+
+    fn format_wasm_heap_size(bytes: u64) -> String {
+        const KIB: f64 = 1024.0;
+        const MIB: f64 = KIB * 1024.0;
+
+        if bytes >= (MIB as u64) {
+            let value = (bytes as f64) / MIB;
+            return format!("{value:.1} MB");
+        }
+
+        if bytes >= (KIB as u64) {
+            let value = (bytes as f64) / KIB;
+            return format!("{value:.1} KB");
+        }
+
+        format!("{bytes} B")
+    }
+
+    fn wasm_heap_size_value() -> String {
+        let memory = wasm_bindgen::memory()
+            .dyn_into::<WebAssembly::Memory>()
+            .ok();
+        let Some(memory) = memory else {
+            return "heap unavailable".to_owned();
+        };
+
+        let buffer = memory.buffer().dyn_into::<ArrayBuffer>().ok();
+        let Some(buffer) = buffer else {
+            return "heap unavailable".to_owned();
+        };
+
+        format_wasm_heap_size(buffer.byte_length() as u64)
+    }
+
+    fn current_metrics() -> [Metric; 4] {
+        [
+            Metric {
+                value: AttrValue::from(wasm_heap_size_value()),
+                label: "Wasm heap size",
+            },
+            Metric {
+                value: AttrValue::from(formatted_college_station_time()),
+                label: "local time in College Station",
+            },
+            Metric {
+                value: AttrValue::from(weekdays_since_energy_start().to_string()),
+                label: "energy drinks consumed (1/weekday)",
+            },
+            Metric {
+                value: AttrValue::from(COMMITS_THIS_MONTH_FALLBACK),
+                label: "commits this month",
+            },
+        ]
     }
 
     fn viewport_size() -> (f64, f64) {
@@ -359,15 +552,16 @@ mod frontend {
     fn app() -> Html {
         let theme = use_state(resolve_theme);
         let metric_index = use_state(|| 0usize);
+        let metrics = use_state(current_metrics);
         let preview_card = use_state(PreviewCardState::hidden);
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
         let preview_size = use_state(|| (PREVIEW_INITIAL_WIDTH, PREVIEW_INITIAL_HEIGHT));
 
         {
-            let current = *theme;
-            use_effect_with((), move |_| {
-                apply_theme(current);
+            let theme = theme.clone();
+            use_effect_with(*theme, move |current| {
+                apply_theme(*current);
                 || ()
             });
         }
@@ -384,15 +578,25 @@ mod frontend {
 
         {
             let metric_index = metric_index.clone();
+            let metrics = metrics.clone();
             use_effect_with((), move |_| {
                 let mut interval_id = None;
                 let mut callback = None;
 
                 if let Some(win) = window() {
-                    let mut cursor = *metric_index;
+                    let cursor = Rc::new(Cell::new(*metric_index));
+                    let next_cursor = cursor.clone();
                     let tick = Closure::<dyn FnMut()>::new(move || {
-                        cursor = (cursor + 1) % METRICS.len();
-                        metric_index.set(cursor);
+                        let next_metrics = current_metrics();
+                        let len = next_metrics.len();
+                        if len == 0 {
+                            return;
+                        }
+
+                        let next_index = (next_cursor.get() + 1) % len;
+                        next_cursor.set(next_index);
+                        metrics.set(next_metrics);
+                        metric_index.set(next_index);
                     });
 
                     interval_id = win
@@ -530,7 +734,7 @@ mod frontend {
             preview_card.x, preview_card.y
         );
 
-        let active_metric = METRICS[*metric_index];
+        let active_metric = metrics[*metric_index].clone();
 
         html! {
             <>
@@ -587,7 +791,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — LSTM component for Austin heat-wave forecasting."}</span>
+                                        <span class="muted">{" — lstm team for ensemble heat-wave forecasting model"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
@@ -601,7 +805,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — AI flight search experience from TAMUHack 2025."}</span>
+                                        <span class="muted">{" — ai flight search experience built in 2024 hours (tamuhack 25)"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
@@ -615,7 +819,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — Internal system handling 150+ monthly orders."}</span>
+                                        <span class="muted">{" — internal tool built from the ground up with react + flask"}</span>
                                     </li>
                                 </ul>
                             </div>
@@ -635,7 +839,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — Code and experiments"}</span>
+                                        <span class="muted">{" — code and experiments"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
@@ -649,7 +853,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — Professional profile"}</span>
+                                        <span class="muted">{" — professional profile"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
@@ -659,7 +863,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — Current PDF"}</span>
+                                        <span class="muted">{" — updated feb 5 26"}</span>
                                     </li>
                                 </ul>
                             </div>
