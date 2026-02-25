@@ -155,6 +155,32 @@ mod frontend {
         }
     }
 
+    fn trigger_theme_animation() {
+        let Some(win) = window() else {
+            return;
+        };
+
+        let Some(document) = win.document() else {
+            return;
+        };
+
+        let Some(root) = document.document_element() else {
+            return;
+        };
+
+        let _ = root.set_attribute("data-theme-switching", "true");
+        let root_for_timeout = root.clone();
+        let clear_animation = Closure::<dyn FnMut()>::once(move || {
+            let _ = root_for_timeout.remove_attribute("data-theme-switching");
+        });
+
+        let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+            clear_animation.as_ref().unchecked_ref(),
+            340,
+        );
+        clear_animation.forget();
+    }
+
     fn js_string(value: &str) -> wasm_bindgen::JsValue {
         wasm_bindgen::JsValue::from_str(value)
     }
@@ -672,6 +698,7 @@ mod frontend {
                 let next = (*theme).toggled();
                 persist_theme(next);
                 apply_theme(next);
+                trigger_theme_animation();
                 theme.set(next);
                 theme_icon_cycle.set((*theme_icon_cycle).wrapping_add(1));
             })

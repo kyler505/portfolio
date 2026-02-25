@@ -6,9 +6,6 @@
   --muted: #737373;
   --border: #e5e5e5;
   --focus: #171717;
-  --surface: color-mix(in srgb, var(--secondary) 72%, transparent);
-  --surface-border: color-mix(in srgb, var(--border) 74%, transparent);
-  --surface-shadow: 0 6px 18px color-mix(in srgb, #000000 5%, transparent);
   --theme-transition-fast: 200ms;
   --theme-transition-normal: 220ms;
   --theme-transition-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -35,7 +32,7 @@ body {
 }
 
 body {
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -150,6 +147,10 @@ h3 {
   animation: theme-icon-swap 210ms var(--theme-transition-ease);
 }
 
+html[data-theme-switching="true"] .page-shell {
+  animation: theme-shell-fade 340ms var(--theme-transition-ease);
+}
+
 @keyframes theme-icon-swap {
   from {
     opacity: 0.5;
@@ -162,17 +163,20 @@ h3 {
   }
 }
 
+@keyframes theme-shell-fade {
+  from {
+    opacity: 0.92;
+    transform: translateY(0.18rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .section-block {
-  background: var(--surface);
-  border: 1px solid var(--surface-border);
-  border-radius: 0.7rem;
-  box-shadow: var(--surface-shadow);
   margin: 0;
-  padding: 0.95rem 1rem;
-  transition:
-    background-color var(--theme-transition-normal) var(--theme-transition-ease),
-    border-color var(--theme-transition-fast) var(--theme-transition-ease),
-    box-shadow var(--theme-transition-fast) var(--theme-transition-ease);
 }
 
 .section-block + .section-block {
@@ -348,6 +352,7 @@ footer {
   .skip-link:focus-visible,
   .theme-toggle,
   .theme-toggle-icon svg,
+  .page-shell,
   .section-block,
   .muted,
   .metric-label,
