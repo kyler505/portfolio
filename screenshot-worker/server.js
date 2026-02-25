@@ -8,6 +8,7 @@ const DEFAULT_PORT = 3001;
 const DEFAULT_CAPTURE_TIMEOUT_MS = 8000;
 const DEFAULT_DNS_LOOKUP_TIMEOUT_MS = 2000;
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1366, height: 768 });
+const HEALTH_CHECK_PAYLOAD = Object.freeze({ ok: true, status: "up" });
 
 const port = readBoundedInt("PORT", DEFAULT_PORT, 1, 65535);
 const captureTimeoutMs = readBoundedInt("CAPTURE_TIMEOUT_MS", DEFAULT_CAPTURE_TIMEOUT_MS, 1000, 120000);
@@ -47,6 +48,29 @@ function jsonResponse(res, statusCode, payload) {
     "cache-control": "no-store",
   });
   res.end(body);
+}
+
+function handleHealthCheck(req, res, pathname) {
+  if (pathname !== "/health" && pathname !== "/uptime") {
+    return false;
+  }
+
+  if (req.method === "GET") {
+    jsonResponse(res, 200, HEALTH_CHECK_PAYLOAD);
+    return true;
+  }
+
+  if (req.method === "HEAD") {
+    res.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    res.end();
+    return true;
+  }
+
+  jsonResponse(res, 404, { ok: false, error: "not found" });
+  return true;
 }
 
 function parseIpv4(address) {
@@ -339,8 +363,7 @@ const server = http.createServer(async (req, res) => {
 
   const requestUrl = new URL(req.url, `http://127.0.0.1:${port}`);
 
-  if (requestUrl.pathname === "/health") {
-    jsonResponse(res, 200, { ok: true });
+  if (handleHealthCheck(req, res, requestUrl.pathname)) {
     return;
   }
 

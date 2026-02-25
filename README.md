@@ -13,7 +13,7 @@ The backend now uses a hybrid screenshot strategy:
 
 Render blueprint uses two services:
 1. `portfolio` (Rust web service): serves frontend assets and handles `/api/preview`.
-2. `screenshot-worker` (Node web service): handles `GET /capture?url=...` + `/health` and returns data-URL screenshots.
+2. `screenshot-worker` (Node web service): handles `GET /capture?url=...` + unauthenticated `GET/HEAD /health` and `/uptime`, and returns data-URL screenshots.
 
 Preview flow:
 - Rust backend fetches OG/Twitter metadata first.
@@ -103,6 +103,17 @@ trunk build --release
 cargo test backend::tests
 node --check screenshot-worker/server.js
 ```
+
+## UptimeRobot monitor target
+
+Use an HTTP(s) monitor pointed at the screenshot worker's public URL with the `/uptime` path.
+
+Exact path to monitor:
+- `https://<your-screenshot-worker-host>/uptime`
+
+Examples:
+- Render public service URL: `https://<render-generated-hostname>/uptime`
+- Local sanity check: `http://127.0.0.1:3001/uptime`
 
 ## Deploying to Render
 
