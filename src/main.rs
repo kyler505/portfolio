@@ -90,12 +90,28 @@ mod frontend {
         fn pressed(self) -> bool {
             matches!(self, Self::Dark)
         }
+    }
 
-        fn icon(self) -> &'static str {
-            match self {
-                Self::Light => "◐",
-                Self::Dark => "◑",
-            }
+    fn theme_toggle_icon(theme: Theme) -> Html {
+        match theme {
+            Theme::Light => html! {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 1 0 11 11Z" />
+                </svg>
+            },
+            Theme::Dark => html! {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3.5" />
+                    <path d="M12 2.5v2.5" />
+                    <path d="M12 19v2.5" />
+                    <path d="M2.5 12H5" />
+                    <path d="M19 12h2.5" />
+                    <path d="m5.5 5.5 1.8 1.8" />
+                    <path d="m16.7 16.7 1.8 1.8" />
+                    <path d="m18.5 5.5-1.8 1.8" />
+                    <path d="m7.3 16.7-1.8 1.8" />
+                </svg>
+            },
         }
     }
 
@@ -216,7 +232,6 @@ mod frontend {
                 ("timeZone", "America/Chicago"),
                 ("hour", "numeric"),
                 ("minute", "2-digit"),
-                ("second", "2-digit"),
                 ("hour12", "true"),
             ],
         )
@@ -916,7 +931,7 @@ mod frontend {
                             aria-pressed={(*theme).pressed().to_string()}
                             onclick={on_toggle}
                         >
-                            <span aria-hidden="true">{(*theme).icon()}</span>
+                            <span class="theme-toggle-icon" aria-hidden="true">{theme_toggle_icon(*theme)}</span>
                         </button>
                     </header>
 
@@ -962,17 +977,17 @@ mod frontend {
                                     </li>
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505/tamuhack25_aa"
-                                            label="FlightPath"
+                                            href="https://github.com/kyler505/temp-data-pipeline"
+                                            label="Temp Data Pipeline"
                                             preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/flightpath-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for FlightPath repository"),
+                                                src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
+                                                alt: AttrValue::from("Preview placeholder for Temp Data Pipeline repository"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — ai flight search experience built in 24 hours (tamuhack 25)"}</span>
+                                        <span class="muted">{" — temporary data pipeline experiments and processing utilities"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink

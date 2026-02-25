@@ -98,16 +98,35 @@ h3 {
 .theme-toggle {
   appearance: none;
   background: none;
-  border: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: var(--text);
   cursor: pointer;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
   line-height: 1;
-  padding: 0.1rem;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.16em;
+  padding: 0.28rem;
+  transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: var(--text);
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  height: 1rem;
+  width: 1rem;
+}
+
+.theme-toggle-icon svg {
+  display: block;
+  height: 100%;
+  width: 100%;
 }
 
 .section-block {
