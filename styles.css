@@ -7,6 +7,7 @@
   --brand: #0b7a75;
   --border: #e5e5e5;
   --focus: #171717;
+  --brand-link: #800000;
   --theme-transition-fast: 200ms;
   --theme-transition-normal: 220ms;
   --theme-switch-slide-ms: 390ms;
@@ -22,6 +23,7 @@
   --brand: #2dd4bf;
   --border: #262626;
   --focus: #fafafa;
+  --brand-link: #d79aa3;
 }
 
 * {
@@ -279,10 +281,20 @@ a {
 }
 
 .brand-link {
-  color: var(--brand);
-  text-decoration: underline;
-  text-decoration-thickness: 0.085em;
-  text-underline-offset: 0.14em;
+  color: var(--brand-link);
+  text-decoration: none;
+}
+
+.brand-link:visited,
+.brand-link:hover,
+.brand-link:focus-visible {
+  color: var(--brand-link);
+  text-decoration: none;
+}
+
+.link.brand-link::after {
+  content: none !important;
+  display: none !important;
 }
 
 .link::after {
