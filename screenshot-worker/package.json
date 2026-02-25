@@ -1,0 +1,13 @@
+{
+  "name": "portfolio-screenshot-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "dependencies": {
+    "playwright": "^1.54.2"
+  }
+}

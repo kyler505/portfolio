@@ -17,6 +17,10 @@ const PREVIEW_INITIAL_WIDTH: f64 = 360.0;
 const PREVIEW_INITIAL_HEIGHT: f64 = 260.0;
 const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
 const PREVIEW_DEFAULT_ALT: &str = "Project preview";
+const PREVIEW_LOADING_TITLE: &str = "Loading preview...";
+const PREVIEW_LOADING_DESCRIPTION: &str = "Fetching link details...";
+const PREVIEW_FALLBACK_TITLE: &str = "Preview unavailable";
+const PREVIEW_FALLBACK_DESCRIPTION: &str = "Link details are unavailable right now.";
 const PREVIEW_FAILURE_RETRY_MS: f64 = 10_000.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -251,7 +255,7 @@ impl PreviewCardState {
             visible: false,
             src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
             alt: AttrValue::from(PREVIEW_DEFAULT_ALT),
-            title: AttrValue::from("Preview unavailable"),
+            title: AttrValue::from(PREVIEW_FALLBACK_TITLE),
             description: AttrValue::from("Hover over a project link to view details."),
             metadata_url: None,
             x: PREVIEW_GUTTER,
@@ -305,8 +309,8 @@ fn resolve_preview_asset(
     Some(PreviewAsset {
         src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
         alt: AttrValue::from(format!("{} preview placeholder", label)),
-        title: AttrValue::from("Loading preview..."),
-        description: AttrValue::from("Fetching link details..."),
+        title: AttrValue::from(PREVIEW_LOADING_TITLE),
+        description: AttrValue::from(PREVIEW_LOADING_DESCRIPTION),
         metadata_url: Some(href.clone()),
     })
 }
@@ -377,7 +381,37 @@ fn apply_remote_preview(
         next.src = AttrValue::from(image.to_string());
     }
 
+    if next.title.as_str() == PREVIEW_LOADING_TITLE {
+        next.title = AttrValue::from(PREVIEW_FALLBACK_TITLE);
+    }
+
+    if next.description.as_str() == PREVIEW_LOADING_DESCRIPTION {
+        next.description = AttrValue::from(PREVIEW_FALLBACK_DESCRIPTION);
+    }
+
     preview_card.set(next);
+}
+
+fn apply_preview_hydration_fallback(preview_card: &UseStateHandle<PreviewCardState>, metadata_url: &str) {
+    let mut next: PreviewCardState = (**preview_card).clone();
+    if !next.visible || next.metadata_url.as_deref() != Some(metadata_url) {
+        return;
+    }
+
+    let mut changed = false;
+    if next.title.as_str() == PREVIEW_LOADING_TITLE {
+        next.title = AttrValue::from(PREVIEW_FALLBACK_TITLE);
+        changed = true;
+    }
+
+    if next.description.as_str() == PREVIEW_LOADING_DESCRIPTION {
+        next.description = AttrValue::from(PREVIEW_FALLBACK_DESCRIPTION);
+        changed = true;
+    }
+
+    if changed {
+        preview_card.set(next);
+    }
 }
 
 fn hydrate_preview(
@@ -394,6 +428,7 @@ fn hydrate_preview(
             PreviewCacheEntry::Pending => return,
             PreviewCacheEntry::Failed { retry_after_ms } => {
                 if js_sys::Date::now() < *retry_after_ms {
+                    apply_preview_hydration_fallback(preview_card, metadata_url);
                     return;
                 }
             }
@@ -434,6 +469,8 @@ fn hydrate_preview(
 
         if let Some(remote) = remote.as_ref() {
             apply_remote_preview(&preview_card_handle, &metadata_url, remote);
+        } else {
+            apply_preview_hydration_fallback(&preview_card_handle, &metadata_url);
         }
     });
 }

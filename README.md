@@ -1,8 +1,20 @@
-# Portfolio (Yew + Rust Preview API)
+# My Personal Portfolio
 
 This repo is a Rust portfolio app with:
 - a Yew frontend (built by Trunk), and
 - an integrated Axum backend in `src/backend.rs` that serves `dist/` and exposes `GET /api/preview`.
+- a self-hosted screenshot worker in `screenshot-worker/` (Node + Playwright) used as an image fallback.
+
+## Architecture
+
+Render blueprint uses two services:
+1. `portfolio` (Rust web service): serves frontend assets and handles `/api/preview`.
+2. `screenshot-worker` (Node web service): handles `GET /capture?url=...` + `/health` and returns data-URL screenshots.
+
+Preview flow:
+- Rust backend fetches OG/Twitter metadata first.
+- If metadata has no usable image and `SCREENSHOT_WORKER_URL` is configured, backend calls the worker and uses the screenshot image.
+- If worker capture fails, backend still returns non-image metadata without failing the full preview request.
 
 ## Local development
 
@@ -30,6 +42,20 @@ cargo run --release
 
 Build order matters: the backend serves static assets from `dist/`, so build the frontend first, then start the Rust server.
 
+4. Run screenshot worker locally (second terminal):
+
+```bash
+npm install --prefix screenshot-worker
+npx --prefix screenshot-worker playwright install chromium
+node screenshot-worker/server.js
+```
+
+5. Enable screenshot fallback in backend (optional):
+
+```bash
+SCREENSHOT_WORKER_URL=http://127.0.0.1:3001 cargo run --release
+```
+
 ## Preview API security notes
 
 `/api/preview` in `src/backend.rs` includes high-level SSRF protections:
@@ -39,25 +65,35 @@ Build order matters: the backend serves static assets from `dist/`, so build the
 - pins outbound requests to validated DNS results,
 - applies request, connect, DNS, redirect, and response-size limits.
 
+`/capture` in `screenshot-worker/server.js` mirrors SSRF-safe URL checks:
+- only allows `http`/`https`,
+- blocks localhost and private/link-local/loopback/multicast/documentation targets,
+- resolves DNS and rejects blocked resolved addresses before Playwright navigation.
+
 ## Verification commands
 
 ```bash
 cargo check
 trunk build --release
 cargo test backend::tests
+node --check screenshot-worker/server.js
 ```
 
 ## Deploying to Render
 
-This repo includes `render.yaml` for a single Rust web service.
+This repo includes `render.yaml` for a two-service deployment.
 
-- Build command installs wasm tooling, builds the frontend, then builds the backend binary.
-- Start command runs `./target/release/portfolio`.
-- Health check path is `/`.
+- `portfolio` build command installs wasm tooling, builds the frontend, then builds the backend binary.
+- `portfolio` start command runs `./target/release/portfolio`.
+- `screenshot-worker` build command installs Node deps and Playwright Chromium.
+- `screenshot-worker` start command runs `node screenshot-worker/server.js`.
 
 Environment variables:
 - `PORT` is provided by Render and used by `src/backend.rs`.
 - `RUST_LOG` is included for runtime log level control.
+- `SCREENSHOT_WORKER_URL` points backend fallback calls to `http://screenshot-worker:10000` in Render.
+- `SCREENSHOT_WORKER_TIMEOUT_MS` controls screenshot worker request timeout.
+- `SCREENSHOT_WORKER_TOKEN` is optional. If set on both services, backend sends `Authorization: Bearer <token>`.
 - `PREVIEW_*` values are included as deploy-time placeholders for preview API tuning defaults.
   - Current runtime defaults are defined in `src/backend.rs` constants.
 

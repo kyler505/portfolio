@@ -106,3 +106,19 @@
 - Kept reduced-motion and keyboard focus behavior intact while extending hover cards to display image/title/description.
 - Verified with `cargo check`, `trunk build --release`, `cargo build --release`, and a live `curl` sanity call against the running backend.
 - Required verification commands run with outcomes captured.
+
+## 2026-02-25 self-hosted screenshot fallback
+- [x] Restate goal + acceptance criteria
+- [x] Add self-hosted screenshot worker (`/capture`, `/health`) with SSRF-safe URL validation
+- [x] Integrate backend screenshot fallback after OG/Twitter extraction with env-based runtime knobs
+- [x] Fix frontend hydration fallback so loading copy does not stick after failed metadata fetch
+- [x] Update Render blueprint and README for two-service deployment and local dev
+- [x] Run verification (`cargo check`, `cargo test backend::tests`, `trunk build --release`, `node --check screenshot-worker/server.js`)
+- [ ] Commit and push to `origin/main`
+
+### Acceptance Criteria
+- Introduce self-hosted screenshot worker with URL validation and Playwright capture.
+- Keep preview API contract stable while adding backend screenshot fallback when metadata image is absent.
+- Preserve existing backend SSRF protections and degrade gracefully when worker is unavailable.
+- Ensure frontend preview card leaves loading state after hydration failure.
+- Document and configure two-service Render deployment.

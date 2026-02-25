@@ -13,6 +13,10 @@ services:
     envVars:
       - key: RUST_LOG
         value: info
+      - key: SCREENSHOT_WORKER_URL
+        value: http://screenshot-worker:10000
+      - key: SCREENSHOT_WORKER_TIMEOUT_MS
+        value: "8000"
       - key: PREVIEW_CACHE_TTL_SECONDS
         value: "300"
       - key: PREVIEW_CACHE_MAX_ENTRIES
@@ -29,3 +33,16 @@ services:
         value: "4"
       - key: PREVIEW_MAX_RESOLVED_IP_ATTEMPTS
         value: "3"
+
+  - type: web
+    name: screenshot-worker
+    env: node
+    plan: free
+    buildCommand: |
+      npm install --prefix screenshot-worker --omit=dev
+      npx --prefix screenshot-worker playwright install --with-deps chromium
+    startCommand: node screenshot-worker/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: CAPTURE_TIMEOUT_MS
+        value: "8000"

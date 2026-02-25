@@ -6,7 +6,10 @@ use axum::{
     Json, Router,
 };
 use futures_util::StreamExt;
-use reqwest::{header::LOCATION, redirect::Policy};
+use reqwest::{
+    header::{AUTHORIZATION, LOCATION},
+    redirect::Policy,
+};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,6 +34,7 @@ const DEFAULT_PREVIEW_CONNECT_TIMEOUT_MS: u64 = 3_000;
 const DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_PREVIEW_MAX_REDIRECTS: usize = 4;
 const DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS: usize = 3;
+const DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS: u64 = 8_000;
 
 const PREVIEW_CACHE_TTL_SECONDS_BOUNDS: (u64, u64) = (1, 86_400);
 const PREVIEW_CACHE_MAX_ENTRIES_BOUNDS: (usize, usize) = (1, 10_000);
@@ -40,6 +44,7 @@ const PREVIEW_CONNECT_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 30_000);
 const PREVIEW_DNS_LOOKUP_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 30_000);
 const PREVIEW_MAX_REDIRECTS_BOUNDS: (usize, usize) = (1, 10);
 const PREVIEW_MAX_RESOLVED_IP_ATTEMPTS_BOUNDS: (usize, usize) = (1, 10);
+const SCREENSHOT_WORKER_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 120_000);
 const USER_AGENT: &str = "portfolio-preview-bot/1.0";
 
 #[derive(Clone)]
@@ -52,6 +57,9 @@ struct PreviewRuntimeConfig {
     dns_lookup_timeout: Duration,
     max_redirects: usize,
     max_resolved_ip_attempts: usize,
+    screenshot_worker_url: Option<Url>,
+    screenshot_worker_timeout: Duration,
+    screenshot_worker_token: Option<String>,
 }
 
 impl PreviewRuntimeConfig {
@@ -99,6 +107,13 @@ impl PreviewRuntimeConfig {
             DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS,
             PREVIEW_MAX_RESOLVED_IP_ATTEMPTS_BOUNDS,
         );
+        let screenshot_worker_timeout_ms = parse_env_u64_with_bounds(
+            "SCREENSHOT_WORKER_TIMEOUT_MS",
+            DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS,
+            SCREENSHOT_WORKER_TIMEOUT_MS_BOUNDS,
+        );
+        let screenshot_worker_url = parse_env_http_url("SCREENSHOT_WORKER_URL");
+        let screenshot_worker_token = parse_env_non_empty_string("SCREENSHOT_WORKER_TOKEN");
 
         Self {
             cache_ttl_seconds,
@@ -109,6 +124,9 @@ impl PreviewRuntimeConfig {
             dns_lookup_timeout: Duration::from_millis(dns_lookup_timeout_ms),
             max_redirects,
             max_resolved_ip_attempts,
+            screenshot_worker_url,
+            screenshot_worker_timeout: Duration::from_millis(screenshot_worker_timeout_ms),
+            screenshot_worker_token,
         }
     }
 }
@@ -280,6 +298,24 @@ fn parse_timeout_ms_with_legacy_seconds(
         .unwrap_or(default_ms)
 }
 
+fn parse_env_non_empty_string(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_env_http_url(name: &str) -> Option<Url> {
+    let value = parse_env_non_empty_string(name)?;
+    let parsed = Url::parse(&value).ok()?;
+
+    if parsed.scheme() == "http" || parsed.scheme() == "https" {
+        Some(parsed)
+    } else {
+        None
+    }
+}
+
 async fn read_from_cache(state: &AppState, key: &str) -> Option<PreviewPayload> {
     let now = Instant::now();
     {
@@ -427,13 +463,18 @@ async fn fetch_preview_payload(
 
         let body = read_limited_body(response, config.response_max_bytes).await?;
         let metadata = extract_metadata(&body, &current_url);
+        let screenshot_image = if metadata.image.is_none() {
+            fetch_screenshot_image(&current_url, config).await
+        } else {
+            None
+        };
 
         return Ok(PreviewPayload {
             ok: true,
             url: Some(current_url.to_string()),
             title: metadata.title,
             description: metadata.description,
-            image: metadata.image,
+            image: metadata.image.or(screenshot_image),
             error: None,
         });
     }
@@ -491,6 +532,41 @@ async fn send_pinned_request(
     }
 
     Err("failed to fetch URL")
+}
+
+async fn fetch_screenshot_image(target_url: &Url, config: &PreviewRuntimeConfig) -> Option<String> {
+    let worker_base_url = config.screenshot_worker_url.as_ref()?;
+    let capture_url = worker_base_url.join("capture").ok()?;
+    let client = reqwest::Client::builder()
+        .timeout(config.screenshot_worker_timeout)
+        .connect_timeout(config.connect_timeout)
+        .redirect(Policy::none())
+        .user_agent(USER_AGENT)
+        .build()
+        .ok()?;
+
+    let mut request = client.get(capture_url).query(&[("url", target_url.as_str())]);
+    if let Some(token) = config.screenshot_worker_token.as_ref() {
+        request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+    }
+
+    let response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let payload = response
+        .json::<ScreenshotWorkerCaptureResponse>()
+        .await
+        .ok()?;
+    if !payload.ok {
+        return None;
+    }
+
+    payload
+        .image
+        .or(payload.image_data_url)
+        .and_then(normalize_text)
 }
 
 fn build_preview_client(
@@ -593,6 +669,11 @@ mod tests {
                 dns_lookup_timeout: Duration::from_millis(DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS),
                 max_redirects: DEFAULT_PREVIEW_MAX_REDIRECTS,
                 max_resolved_ip_attempts: DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS,
+                screenshot_worker_url: None,
+                screenshot_worker_timeout: Duration::from_millis(
+                    DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS,
+                ),
+                screenshot_worker_token: None,
             },
         };
         let now = Instant::now();
@@ -680,6 +761,15 @@ struct ExtractedMetadata {
     title: Option<String>,
     description: Option<String>,
     image: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenshotWorkerCaptureResponse {
+    ok: bool,
+    image: Option<String>,
+    #[serde(alias = "imageDataUrl")]
+    image_data_url: Option<String>,
 }
 
 fn extract_metadata(document_html: &str, base_url: &Url) -> ExtractedMetadata {
