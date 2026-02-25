@@ -10,8 +10,6 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod frontend {
-    use std::{cell::Cell, rc::Rc};
-
     use js_sys::{ArrayBuffer, Function, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
     use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
@@ -333,6 +331,16 @@ mod frontend {
         ]
     }
 
+    fn next_metric_for_label(current_label: &str) -> Metric {
+        let metrics = current_metrics();
+        let current_index = metrics
+            .iter()
+            .position(|metric| metric.label == current_label)
+            .unwrap_or(0);
+        let next_index = (current_index + 1) % metrics.len();
+        metrics[next_index].clone()
+    }
+
     fn viewport_size() -> (f64, f64) {
         let Some(win) = window() else {
             return (1280.0, 720.0);
@@ -582,18 +590,9 @@ mod frontend {
                 let mut callback = None;
 
                 if let Some(win) = window() {
-                    let cursor = Rc::new(Cell::new(0usize));
-                    let next_cursor = cursor.clone();
                     let tick = Closure::<dyn FnMut()>::new(move || {
-                        let next_metrics = current_metrics();
-                        let len = next_metrics.len();
-                        if len == 0 {
-                            return;
-                        }
-
-                        let next_index = (next_cursor.get() + 1) % len;
-                        next_cursor.set(next_index);
-                        active_metric.set(next_metrics[next_index].clone());
+                        let next_metric = next_metric_for_label((*active_metric).label);
+                        active_metric.set(next_metric);
                     });
 
                     interval_id = win
