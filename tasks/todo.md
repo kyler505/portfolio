@@ -122,3 +122,30 @@
 - Preserve existing backend SSRF protections and degrade gracefully when worker is unavailable.
 - Ensure frontend preview card leaves loading state after hydration failure.
 - Document and configure two-service Render deployment.
+
+## 2026-02-25 hybrid screenshot strategy (scheduled + on-demand)
+- [x] Restate goal + acceptance criteria
+- [x] Read existing backend preview/screenshot and Render wiring
+- [x] Add persistent screenshot cache index with TTL + stale grace env controls
+- [x] Update `/api/preview` hybrid behavior (fresh/stale/missing branches)
+- [x] Add token-protected `POST /internal/refresh-screenshots` with bounded concurrency
+- [x] Add refresh URL config + Render cron caller integration
+- [x] Update README docs for behavior/env/config/cron
+- [x] Run verification (`cargo check`, `cargo test backend::tests`, `trunk build --release`, `node --check screenshot-worker/server.js`)
+- [ ] Commit and push to `origin/main`
+
+### Acceptance Criteria
+- Prefer cached screenshots refreshed by schedule.
+- Keep on-demand screenshot fallback for missing or too-old cache entries.
+- Persist screenshot metadata index to writable temp path and mirror in memory.
+- Provide authenticated internal batch refresh endpoint using shared safety checks.
+- Configure Render cron service for daily refresh calls.
+
+### Working Notes
+- Keep frontend behavior unchanged except existing loading/fallback semantics.
+- Keep existing `/api/preview` request hardening and limits unchanged.
+
+### Results
+- Added a persistent screenshot cache index (disk + in-memory mirror) with fresh/stale/missing decision branches for `/api/preview` fallback behavior.
+- Added authenticated `POST /internal/refresh-screenshots` batch refresh using shared URL safety checks and bounded concurrency.
+- Added `config/preview-urls.json`, a cron caller script, Render cron wiring, and README updates for hybrid behavior + env configuration.

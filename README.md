@@ -5,6 +5,10 @@ This repo is a Rust portfolio app with:
 - an integrated Axum backend in `src/backend.rs` that serves `dist/` and exposes `GET /api/preview`.
 - a self-hosted screenshot worker in `screenshot-worker/` (Node + Playwright) used as an image fallback.
 
+The backend now uses a hybrid screenshot strategy:
+- scheduled screenshot refreshes populate a persistent cache index, and
+- `/api/preview` can still capture on-demand when cache data is missing or too old.
+
 ## Architecture
 
 Render blueprint uses two services:
@@ -13,8 +17,18 @@ Render blueprint uses two services:
 
 Preview flow:
 - Rust backend fetches OG/Twitter metadata first.
-- If metadata has no usable image and `SCREENSHOT_WORKER_URL` is configured, backend calls the worker and uses the screenshot image.
-- If worker capture fails, backend still returns non-image metadata without failing the full preview request.
+- If metadata already has an image, that image is returned.
+- If metadata has no image, backend applies screenshot cache semantics:
+  - fresh (`now < expires_at`): return cached screenshot,
+  - stale in grace (`expires_at <= now <= expires_at + grace`): return stale screenshot immediately and trigger async refresh,
+  - missing/expired beyond grace: call screenshot worker on-demand; cache on success, otherwise return metadata without image.
+- Screenshot metadata is persisted to `SCREENSHOT_CACHE_INDEX_PATH` (default `/tmp/preview-cache.json`) and mirrored in memory.
+
+Internal refresh endpoint:
+- `POST /internal/refresh-screenshots`
+- token-protected via `SCREENSHOT_REFRESH_TOKEN` (`Authorization: Bearer <token>`)
+- reads URLs from `config/preview-urls.json` (or `SCREENSHOT_URLS_CONFIG_PATH`)
+- refreshes screenshots with bounded concurrency (`SCREENSHOT_REFRESH_CONCURRENCY`, default `3`).
 
 ## Local development
 
@@ -54,6 +68,14 @@ node screenshot-worker/server.js
 
 ```bash
 SCREENSHOT_WORKER_URL=http://127.0.0.1:3001 cargo run --release
+```
+
+6. Trigger a manual refresh batch locally (optional):
+
+```bash
+SCREENSHOT_REFRESH_TOKEN=dev-token \
+  curl -X POST http://127.0.0.1:8080/internal/refresh-screenshots \
+  -H "Authorization: Bearer dev-token"
 ```
 
 ## Preview API security notes
@@ -98,9 +120,27 @@ Environment variables:
 - `SCREENSHOT_WORKER_URL` points backend fallback calls to `http://screenshot-worker:10000` in Render.
 - `SCREENSHOT_WORKER_TIMEOUT_MS` controls screenshot worker request timeout.
 - `SCREENSHOT_WORKER_TOKEN` is required in the blueprint for both services (configured with `sync: false` placeholders); backend sends `Authorization: Bearer <token>` and the worker rejects missing/invalid tokens.
+- `SCREENSHOT_TTL_SECONDS` sets screenshot freshness TTL (default `604800`, 7 days).
+- `SCREENSHOT_STALE_GRACE_SECONDS` sets stale grace window (default `1209600`, 14 days).
+- `SCREENSHOT_CACHE_INDEX_PATH` sets cache index path (default `/tmp/preview-cache.json`).
+- `SCREENSHOT_REFRESH_TOKEN` protects `POST /internal/refresh-screenshots` and is also used by Render cron service.
+- `SCREENSHOT_URLS_CONFIG_PATH` sets the URL list config path (default `config/preview-urls.json`).
+- `SCREENSHOT_REFRESH_CONCURRENCY` bounds refresh fan-out (default `3`, allowed `2-4`).
 - `DNS_LOOKUP_TIMEOUT_MS` controls worker DNS resolution timeout for SSRF host validation.
 - `PREVIEW_*` values are included as deploy-time placeholders for preview API tuning defaults.
   - Current runtime defaults are defined in `src/backend.rs` constants.
+
+Maintaining refresh URLs:
+- edit `config/preview-urls.json`
+- supported formats:
+  - object: `{ "urls": ["https://...", "https://..."] }`
+  - array: `["https://...", "https://..."]`
+- each URL is validated with the same SSRF-safe parser used by `/api/preview`; invalid entries are skipped and counted in refresh summary.
+
+Render cron notes:
+- `render.yaml` includes `preview-screenshot-refresh` cron scheduled daily (`0 3 * * *`).
+- cron runs `node scripts/refresh-screenshots.mjs`, which calls backend `POST /internal/refresh-screenshots` with bearer token.
+- `SCREENSHOT_REFRESH_ENDPOINT` defaults to `http://portfolio:10000/internal/refresh-screenshots`; update it if your Render network topology differs.
 
 Deploy flow:
 1. Push repo to GitHub.

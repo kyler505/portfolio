@@ -1430,6 +1430,7 @@ dependencies = [
  "reqwest",
  "scraper",
  "serde",
+ "serde_json",
  "tokio",
  "tower-http",
  "url",

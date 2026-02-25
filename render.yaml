@@ -19,6 +19,18 @@ services:
         value: "8000"
       - key: SCREENSHOT_WORKER_TOKEN
         sync: false
+      - key: SCREENSHOT_TTL_SECONDS
+        value: "604800"
+      - key: SCREENSHOT_STALE_GRACE_SECONDS
+        value: "1209600"
+      - key: SCREENSHOT_CACHE_INDEX_PATH
+        value: /tmp/preview-cache.json
+      - key: SCREENSHOT_REFRESH_TOKEN
+        sync: false
+      - key: SCREENSHOT_URLS_CONFIG_PATH
+        value: config/preview-urls.json
+      - key: SCREENSHOT_REFRESH_CONCURRENCY
+        value: "3"
       - key: PREVIEW_CACHE_TTL_SECONDS
         value: "300"
       - key: PREVIEW_CACHE_MAX_ENTRIES
@@ -52,3 +64,16 @@ services:
         sync: false
       - key: DNS_LOOKUP_TIMEOUT_MS
         value: "2000"
+
+  - type: cron
+    name: preview-screenshot-refresh
+    env: node
+    plan: free
+    schedule: "0 3 * * *"
+    buildCommand: ""
+    startCommand: node scripts/refresh-screenshots.mjs
+    envVars:
+      - key: SCREENSHOT_REFRESH_ENDPOINT
+        value: http://portfolio:10000/internal/refresh-screenshots
+      - key: SCREENSHOT_REFRESH_TOKEN
+        sync: false

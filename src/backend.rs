@@ -2,7 +2,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::StreamExt;
@@ -14,13 +14,15 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     net::{IpAddr, SocketAddr},
+    path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     net::lookup_host,
-    sync::RwLock,
+    sync::{RwLock, Semaphore},
     time::{timeout, Instant},
 };
 use tower_http::services::{ServeDir, ServeFile};
@@ -35,6 +37,11 @@ const DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_PREVIEW_MAX_REDIRECTS: usize = 4;
 const DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS: usize = 3;
 const DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS: u64 = 8_000;
+const DEFAULT_SCREENSHOT_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
+const DEFAULT_SCREENSHOT_STALE_GRACE_SECONDS: u64 = 14 * 24 * 60 * 60;
+const DEFAULT_SCREENSHOT_REFRESH_CONCURRENCY: usize = 3;
+const DEFAULT_SCREENSHOT_CACHE_INDEX_PATH: &str = "/tmp/preview-cache.json";
+const DEFAULT_SCREENSHOT_URL_LIST_PATH: &str = "config/preview-urls.json";
 
 const PREVIEW_CACHE_TTL_SECONDS_BOUNDS: (u64, u64) = (1, 86_400);
 const PREVIEW_CACHE_MAX_ENTRIES_BOUNDS: (usize, usize) = (1, 10_000);
@@ -45,6 +52,9 @@ const PREVIEW_DNS_LOOKUP_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 30_000);
 const PREVIEW_MAX_REDIRECTS_BOUNDS: (usize, usize) = (1, 10);
 const PREVIEW_MAX_RESOLVED_IP_ATTEMPTS_BOUNDS: (usize, usize) = (1, 10);
 const SCREENSHOT_WORKER_TIMEOUT_MS_BOUNDS: (u64, u64) = (100, 120_000);
+const SCREENSHOT_TTL_SECONDS_BOUNDS: (u64, u64) = (60, 365 * 24 * 60 * 60);
+const SCREENSHOT_STALE_GRACE_SECONDS_BOUNDS: (u64, u64) = (0, 365 * 24 * 60 * 60);
+const SCREENSHOT_REFRESH_CONCURRENCY_BOUNDS: (usize, usize) = (2, 4);
 const USER_AGENT: &str = "portfolio-preview-bot/1.0";
 
 #[derive(Clone)]
@@ -60,6 +70,12 @@ struct PreviewRuntimeConfig {
     screenshot_worker_url: Option<Url>,
     screenshot_worker_timeout: Duration,
     screenshot_worker_token: Option<String>,
+    screenshot_ttl_seconds: u64,
+    screenshot_stale_grace_seconds: u64,
+    screenshot_cache_index_path: PathBuf,
+    screenshot_refresh_token: Option<String>,
+    screenshot_refresh_concurrency: usize,
+    screenshot_refresh_urls_path: PathBuf,
 }
 
 impl PreviewRuntimeConfig {
@@ -112,8 +128,30 @@ impl PreviewRuntimeConfig {
             DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS,
             SCREENSHOT_WORKER_TIMEOUT_MS_BOUNDS,
         );
+        let screenshot_ttl_seconds = parse_env_u64_with_bounds(
+            "SCREENSHOT_TTL_SECONDS",
+            DEFAULT_SCREENSHOT_TTL_SECONDS,
+            SCREENSHOT_TTL_SECONDS_BOUNDS,
+        );
+        let screenshot_stale_grace_seconds = parse_env_u64_with_bounds(
+            "SCREENSHOT_STALE_GRACE_SECONDS",
+            DEFAULT_SCREENSHOT_STALE_GRACE_SECONDS,
+            SCREENSHOT_STALE_GRACE_SECONDS_BOUNDS,
+        );
+        let screenshot_refresh_concurrency = parse_env_usize_with_bounds(
+            "SCREENSHOT_REFRESH_CONCURRENCY",
+            DEFAULT_SCREENSHOT_REFRESH_CONCURRENCY,
+            SCREENSHOT_REFRESH_CONCURRENCY_BOUNDS,
+        );
         let screenshot_worker_url = parse_env_http_url("SCREENSHOT_WORKER_URL");
         let screenshot_worker_token = parse_env_non_empty_string("SCREENSHOT_WORKER_TOKEN");
+        let screenshot_cache_index_path = parse_env_non_empty_string("SCREENSHOT_CACHE_INDEX_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_SCREENSHOT_CACHE_INDEX_PATH));
+        let screenshot_refresh_token = parse_env_non_empty_string("SCREENSHOT_REFRESH_TOKEN");
+        let screenshot_refresh_urls_path = parse_env_non_empty_string("SCREENSHOT_URLS_CONFIG_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_SCREENSHOT_URL_LIST_PATH));
 
         Self {
             cache_ttl_seconds,
@@ -127,6 +165,12 @@ impl PreviewRuntimeConfig {
             screenshot_worker_url,
             screenshot_worker_timeout: Duration::from_millis(screenshot_worker_timeout_ms),
             screenshot_worker_token,
+            screenshot_ttl_seconds,
+            screenshot_stale_grace_seconds,
+            screenshot_cache_index_path,
+            screenshot_refresh_token,
+            screenshot_refresh_concurrency,
+            screenshot_refresh_urls_path,
         }
     }
 }
@@ -134,6 +178,8 @@ impl PreviewRuntimeConfig {
 #[derive(Clone)]
 pub struct AppState {
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    screenshot_cache: Arc<RwLock<ScreenshotCacheStore>>,
+    screenshot_refresh_in_flight: Arc<RwLock<HashSet<String>>>,
     config: PreviewRuntimeConfig,
 }
 
@@ -142,6 +188,43 @@ struct CacheEntry {
     created_at: Instant,
     expires_at: Instant,
     value: PreviewPayload,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ScreenshotCacheEntry {
+    image: String,
+    captured_at: u64,
+    expires_at: u64,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ScreenshotCacheIndex {
+    entries: HashMap<String, ScreenshotCacheEntry>,
+}
+
+struct ScreenshotCacheStore {
+    file_path: PathBuf,
+    entries: HashMap<String, ScreenshotCacheEntry>,
+}
+
+impl ScreenshotCacheStore {
+    fn load_from_disk(file_path: PathBuf) -> Self {
+        let entries = read_screenshot_cache_index(&file_path)
+            .map(|index| index.entries)
+            .unwrap_or_default();
+
+        Self { file_path, entries }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ScreenshotCacheDecision {
+    Fresh,
+    StaleWithinGrace,
+    MissingOrExpired,
 }
 
 #[derive(Deserialize)]
@@ -185,9 +268,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(8080);
     let bind_address = format!("0.0.0.0:{port}");
     let preview_config = PreviewRuntimeConfig::from_env();
+    let screenshot_cache =
+        ScreenshotCacheStore::load_from_disk(preview_config.screenshot_cache_index_path.clone());
 
     let state = AppState {
         cache: Arc::new(RwLock::new(HashMap::new())),
+        screenshot_cache: Arc::new(RwLock::new(screenshot_cache)),
+        screenshot_refresh_in_flight: Arc::new(RwLock::new(HashSet::new())),
         config: preview_config,
     };
 
@@ -195,6 +282,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/api/preview", get(get_preview))
+        .route(
+            "/internal/refresh-screenshots",
+            post(refresh_screenshots_endpoint),
+        )
         .fallback_service(static_service)
         .with_state(state);
 
@@ -229,7 +320,7 @@ async fn get_preview(
         );
     }
 
-    let fetched = match fetch_preview_payload(parsed_url, &state.config).await {
+    let fetched = match fetch_preview_payload(parsed_url, &state).await {
         Ok(payload) => payload,
         Err(error_message) => {
             return json_response(
@@ -249,11 +340,107 @@ async fn get_preview(
     )
 }
 
-fn json_response(status: StatusCode, payload: PreviewPayload, cache_control: HeaderValue) -> impl IntoResponse {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenshotRefreshSummary {
+    ok: bool,
+    requested_urls: usize,
+    refreshed: usize,
+    invalid: usize,
+    failed: usize,
+}
+
+async fn refresh_screenshots_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if state.config.screenshot_refresh_token.is_none() {
+        return json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            PreviewPayload::error("refresh token is not configured"),
+            cache_control("no-store"),
+        );
+    }
+
+    if !is_refresh_authorized(&headers, &state.config) {
+        return json_response(
+            StatusCode::UNAUTHORIZED,
+            PreviewPayload::error("unauthorized"),
+            cache_control("no-store"),
+        );
+    }
+
+    let raw_urls = match read_refresh_urls_from_config(&state.config.screenshot_refresh_urls_path) {
+        Ok(urls) => urls,
+        Err(_) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                PreviewPayload::error("unable to read configured URL list"),
+                cache_control("no-store"),
+            )
+        }
+    };
+
+    let mut valid_urls = Vec::new();
+    let mut invalid = 0usize;
+
+    for raw_url in &raw_urls {
+        match parse_preview_url(raw_url).await {
+            Ok(parsed) => valid_urls.push(parsed),
+            Err(_) => invalid += 1,
+        }
+    }
+
+    let semaphore = Arc::new(Semaphore::new(state.config.screenshot_refresh_concurrency));
+    let mut tasks = futures_util::stream::FuturesUnordered::new();
+
+    for url in valid_urls {
+        let state_clone = state.clone();
+        let semaphore_clone = semaphore.clone();
+        tasks.push(tokio::spawn(async move {
+            let Ok(_permit) = semaphore_clone.acquire_owned().await else {
+                return false;
+            };
+
+            refresh_screenshot_for_url(&state_clone, &url, "scheduled-refresh")
+                .await
+                .is_some()
+        }));
+    }
+
+    let mut refreshed = 0usize;
+    let mut failed = 0usize;
+
+    while let Some(join_result) = tasks.next().await {
+        match join_result {
+            Ok(true) => refreshed += 1,
+            Ok(false) | Err(_) => failed += 1,
+        }
+    }
+
+    let summary = ScreenshotRefreshSummary {
+        ok: true,
+        requested_urls: raw_urls.len(),
+        refreshed,
+        invalid,
+        failed,
+    };
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::CACHE_CONTROL, cache_control("no-store"));
+    response_headers.insert(header::VARY, HeaderValue::from_static("Authorization"));
+    (StatusCode::OK, response_headers, Json(summary)).into_response()
+}
+
+fn json_response(
+    status: StatusCode,
+    payload: PreviewPayload,
+    cache_control: HeaderValue,
+) -> axum::response::Response {
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, cache_control);
     headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
-    (status, headers, Json(payload))
+    (status, headers, Json(payload)).into_response()
 }
 
 fn cache_control(value: &str) -> HeaderValue {
@@ -316,6 +503,84 @@ fn parse_env_http_url(name: &str) -> Option<Url> {
     }
 }
 
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let authorization = headers.get(AUTHORIZATION)?;
+    let value = authorization.to_str().ok()?;
+    let prefix = "Bearer ";
+
+    if !value.starts_with(prefix) {
+        return None;
+    }
+
+    Some(value[prefix.len()..].trim())
+}
+
+fn is_refresh_authorized(headers: &HeaderMap, config: &PreviewRuntimeConfig) -> bool {
+    let Some(expected_token) = config.screenshot_refresh_token.as_deref() else {
+        return false;
+    };
+
+    let Some(provided_token) = read_bearer_token(headers) else {
+        return false;
+    };
+
+    !provided_token.is_empty() && provided_token == expected_token
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RefreshUrlConfig {
+    Bare(Vec<String>),
+    Wrapped { urls: Vec<String> },
+}
+
+impl RefreshUrlConfig {
+    fn into_urls(self) -> Vec<String> {
+        match self {
+            Self::Bare(urls) => urls,
+            Self::Wrapped { urls } => urls,
+        }
+    }
+}
+
+fn read_refresh_urls_from_config(path: &Path) -> Result<Vec<String>, ()> {
+    let raw = fs::read_to_string(path).map_err(|_| ())?;
+    let parsed: RefreshUrlConfig = serde_json::from_str(&raw).map_err(|_| ())?;
+
+    let urls = parsed
+        .into_urls()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+
+    Ok(urls)
+}
+
+fn read_screenshot_cache_index(path: &Path) -> Result<ScreenshotCacheIndex, ()> {
+    let raw = fs::read_to_string(path).map_err(|_| ())?;
+    serde_json::from_str(&raw).map_err(|_| ())
+}
+
+fn write_screenshot_cache_index(path: &Path, entries: &HashMap<String, ScreenshotCacheEntry>) -> Result<(), ()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| ())?;
+    }
+
+    let index = ScreenshotCacheIndex {
+        entries: entries.clone(),
+    };
+    let encoded = serde_json::to_vec_pretty(&index).map_err(|_| ())?;
+    fs::write(path, encoded).map_err(|_| ())
+}
+
 async fn read_from_cache(state: &AppState, key: &str) -> Option<PreviewPayload> {
     let now = Instant::now();
     {
@@ -367,6 +632,120 @@ fn evict_oldest_entry(cache: &mut HashMap<String, CacheEntry>) {
     };
 
     cache.remove(&key_to_remove);
+}
+
+fn decide_screenshot_cache_action(
+    now_unix: u64,
+    cache_entry: Option<&ScreenshotCacheEntry>,
+    stale_grace_seconds: u64,
+) -> ScreenshotCacheDecision {
+    let Some(entry) = cache_entry else {
+        return ScreenshotCacheDecision::MissingOrExpired;
+    };
+
+    if now_unix < entry.expires_at {
+        return ScreenshotCacheDecision::Fresh;
+    }
+
+    let stale_limit = entry.expires_at.saturating_add(stale_grace_seconds);
+    if now_unix <= stale_limit {
+        return ScreenshotCacheDecision::StaleWithinGrace;
+    }
+
+    ScreenshotCacheDecision::MissingOrExpired
+}
+
+async fn read_screenshot_cache_entry(state: &AppState, key: &str) -> Option<ScreenshotCacheEntry> {
+    let cache = state.screenshot_cache.read().await;
+    cache.entries.get(key).cloned()
+}
+
+async fn write_screenshot_cache_entry(state: &AppState, key: String, entry: ScreenshotCacheEntry) {
+    let (path, entries_snapshot) = {
+        let mut cache = state.screenshot_cache.write().await;
+        cache.entries.insert(key, entry);
+        (cache.file_path.clone(), cache.entries.clone())
+    };
+
+    let _ = write_screenshot_cache_index(&path, &entries_snapshot);
+}
+
+async fn update_screenshot_cache_error(state: &AppState, key: &str, message: &str) {
+    let (path, entries_snapshot) = {
+        let mut cache = state.screenshot_cache.write().await;
+        if let Some(entry) = cache.entries.get_mut(key) {
+            entry.last_error = Some(message.to_string());
+        }
+
+        (cache.file_path.clone(), cache.entries.clone())
+    };
+
+    let _ = write_screenshot_cache_index(&path, &entries_snapshot);
+}
+
+async fn refresh_screenshot_for_url(state: &AppState, target_url: &Url, source: &str) -> Option<String> {
+    let captured_at = now_unix_seconds();
+    let image = fetch_screenshot_image(target_url, &state.config).await;
+    let key = target_url.to_string();
+
+    match image {
+        Some(image_value) => {
+            let entry = ScreenshotCacheEntry {
+                image: image_value.clone(),
+                captured_at,
+                expires_at: captured_at.saturating_add(state.config.screenshot_ttl_seconds),
+                source: source.to_string(),
+                last_error: None,
+            };
+            write_screenshot_cache_entry(state, key, entry).await;
+            Some(image_value)
+        }
+        None => {
+            update_screenshot_cache_error(state, &key, "failed to capture screenshot").await;
+            None
+        }
+    }
+}
+
+async fn start_background_screenshot_refresh(state: AppState, target_url: Url) {
+    let key = target_url.to_string();
+    {
+        let mut in_flight = state.screenshot_refresh_in_flight.write().await;
+        if !in_flight.insert(key.clone()) {
+            return;
+        }
+    }
+
+    tokio::spawn(async move {
+        let _ = refresh_screenshot_for_url(&state, &target_url, "async-stale-refresh").await;
+        let mut in_flight = state.screenshot_refresh_in_flight.write().await;
+        in_flight.remove(&key);
+    });
+}
+
+async fn resolve_screenshot_image_for_preview(state: &AppState, target_url: &Url) -> Option<String> {
+    let key = target_url.to_string();
+    let cached = read_screenshot_cache_entry(state, &key).await;
+    let now_unix = now_unix_seconds();
+
+    match decide_screenshot_cache_action(
+        now_unix,
+        cached.as_ref(),
+        state.config.screenshot_stale_grace_seconds,
+    ) {
+        ScreenshotCacheDecision::Fresh => cached.map(|entry| entry.image),
+        ScreenshotCacheDecision::StaleWithinGrace => {
+            if let Some(entry) = cached {
+                start_background_screenshot_refresh(state.clone(), target_url.clone()).await;
+                Some(entry.image)
+            } else {
+                None
+            }
+        }
+        ScreenshotCacheDecision::MissingOrExpired => {
+            refresh_screenshot_for_url(state, target_url, "on-demand-fallback").await
+        }
+    }
 }
 
 async fn parse_preview_url(raw_url: &str) -> Result<Url, &'static str> {
@@ -438,10 +817,33 @@ fn is_documentation_ipv6(ip: std::net::Ipv6Addr) -> bool {
     segments[0] == 0x2001 && segments[1] == 0x0db8
 }
 
-async fn fetch_preview_payload(
+struct FetchedPreviewMetadata {
+    resolved_url: Url,
+    metadata: ExtractedMetadata,
+}
+
+async fn fetch_preview_payload(target_url: Url, state: &AppState) -> Result<PreviewPayload, &'static str> {
+    let fetched = fetch_preview_metadata(target_url, &state.config).await?;
+    let screenshot_image = if fetched.metadata.image.is_none() {
+        resolve_screenshot_image_for_preview(state, &fetched.resolved_url).await
+    } else {
+        None
+    };
+
+    Ok(PreviewPayload {
+        ok: true,
+        url: Some(fetched.resolved_url.to_string()),
+        title: fetched.metadata.title,
+        description: fetched.metadata.description,
+        image: fetched.metadata.image.or(screenshot_image),
+        error: None,
+    })
+}
+
+async fn fetch_preview_metadata(
     target_url: Url,
     config: &PreviewRuntimeConfig,
-) -> Result<PreviewPayload, &'static str> {
+) -> Result<FetchedPreviewMetadata, &'static str> {
     let mut current_url = target_url;
 
     for hop in 0..=config.max_redirects {
@@ -462,20 +864,9 @@ async fn fetch_preview_payload(
         }
 
         let body = read_limited_body(response, config.response_max_bytes).await?;
-        let metadata = extract_metadata(&body, &current_url);
-        let screenshot_image = if metadata.image.is_none() {
-            fetch_screenshot_image(&current_url, config).await
-        } else {
-            None
-        };
-
-        return Ok(PreviewPayload {
-            ok: true,
-            url: Some(current_url.to_string()),
-            title: metadata.title,
-            description: metadata.description,
-            image: metadata.image.or(screenshot_image),
-            error: None,
+        return Ok(FetchedPreviewMetadata {
+            resolved_url: current_url.clone(),
+            metadata: extract_metadata(&body, &current_url),
         });
     }
 
@@ -660,6 +1051,11 @@ mod tests {
     async fn cache_overwrite_at_capacity_does_not_evict_oldest() {
         let state = AppState {
             cache: Arc::new(RwLock::new(HashMap::new())),
+            screenshot_cache: Arc::new(RwLock::new(ScreenshotCacheStore {
+                file_path: PathBuf::from("/tmp/test-preview-cache.json"),
+                entries: HashMap::new(),
+            })),
+            screenshot_refresh_in_flight: Arc::new(RwLock::new(HashSet::new())),
             config: PreviewRuntimeConfig {
                 cache_ttl_seconds: DEFAULT_PREVIEW_CACHE_TTL_SECONDS,
                 cache_max_entries: DEFAULT_PREVIEW_CACHE_MAX_ENTRIES,
@@ -674,6 +1070,12 @@ mod tests {
                     DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS,
                 ),
                 screenshot_worker_token: None,
+                screenshot_ttl_seconds: DEFAULT_SCREENSHOT_TTL_SECONDS,
+                screenshot_stale_grace_seconds: DEFAULT_SCREENSHOT_STALE_GRACE_SECONDS,
+                screenshot_cache_index_path: PathBuf::from("/tmp/test-preview-cache.json"),
+                screenshot_refresh_token: Some("token".to_string()),
+                screenshot_refresh_concurrency: DEFAULT_SCREENSHOT_REFRESH_CONCURRENCY,
+                screenshot_refresh_urls_path: PathBuf::from("config/preview-urls.json"),
             },
         };
         let now = Instant::now();
@@ -734,6 +1136,57 @@ mod tests {
 
         let ips = collect_validated_resolved_ips(resolved).expect("public addresses should pass");
         assert_eq!(ips.len(), 2);
+    }
+
+    #[test]
+    fn screenshot_cache_decision_reports_fresh() {
+        let now: u64 = 1_700_000_000;
+        let entry = ScreenshotCacheEntry {
+            image: "data:image/png;base64,fresh".to_string(),
+            captured_at: now.saturating_sub(10),
+            expires_at: now.saturating_add(20),
+            source: "scheduled-refresh".to_string(),
+            last_error: None,
+        };
+
+        let decision = decide_screenshot_cache_action(now, Some(&entry), 120);
+        assert_eq!(decision, ScreenshotCacheDecision::Fresh);
+    }
+
+    #[test]
+    fn screenshot_cache_decision_reports_stale_within_grace() {
+        let now: u64 = 1_700_000_000;
+        let entry = ScreenshotCacheEntry {
+            image: "data:image/png;base64,stale".to_string(),
+            captured_at: now.saturating_sub(500),
+            expires_at: now.saturating_sub(5),
+            source: "scheduled-refresh".to_string(),
+            last_error: None,
+        };
+
+        let decision = decide_screenshot_cache_action(now, Some(&entry), 60);
+        assert_eq!(decision, ScreenshotCacheDecision::StaleWithinGrace);
+    }
+
+    #[test]
+    fn screenshot_cache_decision_reports_missing_or_expired() {
+        let now: u64 = 1_700_000_000;
+        let entry = ScreenshotCacheEntry {
+            image: "data:image/png;base64,expired".to_string(),
+            captured_at: now.saturating_sub(500),
+            expires_at: now.saturating_sub(120),
+            source: "scheduled-refresh".to_string(),
+            last_error: None,
+        };
+
+        assert_eq!(
+            decide_screenshot_cache_action(now, Some(&entry), 60),
+            ScreenshotCacheDecision::MissingOrExpired
+        );
+        assert_eq!(
+            decide_screenshot_cache_action(now, None, 60),
+            ScreenshotCacheDecision::MissingOrExpired
+        );
     }
 }
 
