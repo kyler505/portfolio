@@ -314,7 +314,7 @@ mod frontend {
         [
             Metric {
                 value: AttrValue::from(wasm_heap_size_value()),
-                label: "Wasm heap size",
+                label: "wasm heap size",
             },
             Metric {
                 value: AttrValue::from(formatted_college_station_time()),
@@ -322,7 +322,7 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "energy drinks consumed (1/weekday)",
+                label: "energy drinks consumed",
             },
             Metric {
                 value: AttrValue::from(COMMITS_THIS_MONTH_FALLBACK),
