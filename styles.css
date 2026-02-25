@@ -276,30 +276,13 @@ footer {
 }
 
 .hover-preview-media {
-  border-radius: 0.5rem 0.5rem 0 0;
+  border-radius: 0.5rem;
   display: block;
   height: auto;
   max-height: min(52vh, 28rem);
   object-fit: contain;
   width: 100%;
   background: var(--secondary);
-}
-
-.hover-preview-copy {
-  padding: 0.65rem 0.8rem 0.82rem;
-}
-
-.hover-preview-title {
-  font-size: 0.88rem;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.hover-preview-description {
-  color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.35;
-  margin-top: 0.3rem;
 }
 
 @media (max-width: 42rem) {

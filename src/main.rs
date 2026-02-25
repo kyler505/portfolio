@@ -708,10 +708,6 @@ mod frontend {
                         onload={on_preview_media_loaded.clone()}
                         onerror={on_preview_media_loaded}
                     />
-                    <div class="hover-preview-copy">
-                        <p class="hover-preview-title">{preview_card.title.clone()}</p>
-                        <p class="hover-preview-description">{preview_card.description.clone()}</p>
-                    </div>
                 </aside>
             </>
         }
