@@ -42,7 +42,7 @@ services:
     plan: free
     buildCommand: |
       npm ci --prefix screenshot-worker --omit=dev
-      npx --prefix screenshot-worker playwright install --with-deps chromium
+      npx --prefix screenshot-worker playwright install chromium
     startCommand: node screenshot-worker/server.js
     healthCheckPath: /health
     envVars:

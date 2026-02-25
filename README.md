@@ -88,8 +88,9 @@ This repo includes `render.yaml` for a two-service deployment.
 
 - `portfolio` build command installs wasm tooling, builds the frontend, then builds the backend binary.
 - `portfolio` start command runs `./target/release/portfolio`.
-- `screenshot-worker` build command installs Node deps and Playwright Chromium.
+- `screenshot-worker` build command installs Node deps and Playwright Chromium (without `--with-deps`, because Render build containers cannot run the privileged OS package install path and it can fail with `su: Authentication failure`).
 - `screenshot-worker` start command runs `node screenshot-worker/server.js`.
+- If runtime logs show missing Chromium shared libraries, install the required system packages in the service environment/base image and redeploy.
 
 Environment variables:
 - `PORT` is provided by Render and used by `src/backend.rs`.
