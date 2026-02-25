@@ -31,6 +31,7 @@ mod frontend {
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
+    const THEME_SWITCH_ANIMATION_MS: u32 = 390;
     const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
     const GITHUB_REPO_OWNER: &str = "kyler505";
     const GITHUB_REPO_NAME: &str = "portfolio";
@@ -170,9 +171,12 @@ mod frontend {
             return;
         };
 
+        timeout_handle.borrow_mut().take();
+        let _ = root.remove_attribute("data-theme-switching");
+        let _ = root.client_width();
         let _ = root.set_attribute("data-theme-switching", "true");
         let root_for_timeout = root.clone();
-        let clear_animation = Timeout::new(340, move || {
+        let clear_animation = Timeout::new(THEME_SWITCH_ANIMATION_MS, move || {
             let _ = root_for_timeout.remove_attribute("data-theme-switching");
         });
         *timeout_handle.borrow_mut() = Some(clear_animation);

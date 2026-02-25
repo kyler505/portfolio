@@ -9,6 +9,7 @@
   --focus: #171717;
   --theme-transition-fast: 200ms;
   --theme-transition-normal: 220ms;
+  --theme-switch-slide-ms: 390ms;
   --theme-transition-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
@@ -44,6 +45,25 @@ body {
   transition:
     background-color var(--theme-transition-normal) var(--theme-transition-ease),
     color var(--theme-transition-fast) var(--theme-transition-ease);
+}
+
+body::before {
+  background: linear-gradient(
+    108deg,
+    color-mix(in srgb, var(--brand) 56%, transparent),
+    color-mix(in srgb, var(--bg) 78%, var(--text) 22%),
+    color-mix(in srgb, var(--secondary) 82%, var(--brand) 18%)
+  );
+  content: "";
+  inset: -10vh auto -10vh 0;
+  opacity: 0;
+  pointer-events: none;
+  position: fixed;
+  transform: translate3d(-118%, 0, 0) skewX(-8deg);
+  transform-origin: left center;
+  width: clamp(14rem, 32vw, 24rem);
+  will-change: transform, opacity;
+  z-index: 50;
 }
 
 .skip-link {
@@ -149,8 +169,12 @@ h3 {
   animation: theme-icon-swap 210ms var(--theme-transition-ease);
 }
 
+html[data-theme-switching="true"] body::before {
+  animation: theme-slide-curtain var(--theme-switch-slide-ms) cubic-bezier(0.2, 0.84, 0.28, 1);
+}
+
 html[data-theme-switching="true"] .page-shell {
-  animation: theme-shell-fade 340ms var(--theme-transition-ease);
+  animation: theme-shell-settle var(--theme-switch-slide-ms) var(--theme-transition-ease);
 }
 
 @keyframes theme-icon-swap {
@@ -165,15 +189,37 @@ html[data-theme-switching="true"] .page-shell {
   }
 }
 
-@keyframes theme-shell-fade {
+@keyframes theme-shell-settle {
   from {
-    opacity: 0.92;
-    transform: translateY(0.18rem);
+    opacity: 0.94;
+    transform: translateX(-0.35rem);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0);
+  }
+}
+
+@keyframes theme-slide-curtain {
+  0% {
+    opacity: 0;
+    transform: translate3d(-118%, 0, 0) skewX(-8deg);
+  }
+
+  18% {
+    opacity: 0.74;
+    transform: translate3d(-76%, 0, 0) skewX(-8deg);
+  }
+
+  64% {
+    opacity: 0.62;
+    transform: translate3d(4%, 0, 0) skewX(-8deg);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(132%, 0, 0) skewX(-8deg);
   }
 }
 
@@ -361,6 +407,7 @@ footer {
   .skip-link:focus-visible,
   .theme-toggle,
   .theme-toggle-icon svg,
+  body::before,
   .page-shell,
   .section-block,
   .muted,
@@ -371,6 +418,11 @@ footer {
   .hover-preview-media {
     animation-duration: 1ms;
     transition-duration: 1ms;
+  }
+
+  html[data-theme-switching="true"] body::before {
+    opacity: 0;
+    transform: translate3d(132%, 0, 0) skewX(-8deg);
   }
 }
 
