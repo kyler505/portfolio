@@ -298,6 +298,9 @@ struct ScreenshotFallbackOutcome {
     worker_succeeded: bool,
     cache_write_ok: Option<bool>,
     error_class: Option<&'static str>,
+    worker_status_code: Option<u16>,
+    worker_status_class: Option<&'static str>,
+    worker_failure_reason: Option<&'static str>,
 }
 
 struct PreviewFetchOutcome {
@@ -310,6 +313,16 @@ struct ScreenshotRefreshOutcome {
     image: Option<String>,
     cache_write_ok: Option<bool>,
     error_class: Option<&'static str>,
+    worker_status_code: Option<u16>,
+    worker_status_class: Option<&'static str>,
+    worker_failure_reason: Option<&'static str>,
+}
+
+struct ScreenshotWorkerFailure {
+    error_class: &'static str,
+    status_code: Option<u16>,
+    status_class: Option<&'static str>,
+    failure_reason: Option<&'static str>,
 }
 
 #[derive(Deserialize)]
@@ -514,6 +527,9 @@ async fn get_preview(
                 "worker_succeeded": screenshot.worker_succeeded,
                 "cache_write_ok": screenshot.cache_write_ok,
                 "error_class": screenshot.error_class,
+                "worker_status_code": screenshot.worker_status_code,
+                "worker_status_class": screenshot.worker_status_class,
+                "worker_failure_reason": screenshot.worker_failure_reason,
             }),
         );
     }
@@ -646,15 +662,21 @@ async fn refresh_screenshots_endpoint(
     let semaphore = Arc::new(Semaphore::new(state.config.screenshot_refresh_concurrency));
     let mut tasks = futures_util::stream::FuturesUnordered::new();
 
-    for url in valid_urls {
+    for (index, url) in valid_urls.into_iter().enumerate() {
         let state_clone = state.clone();
         let semaphore_clone = semaphore.clone();
+        let child_request_id = scheduled_refresh_child_request_id(&request_id, index);
         tasks.push(tokio::spawn(async move {
             let Ok(_permit) = semaphore_clone.acquire_owned().await else {
                 return false;
             };
 
-            refresh_screenshot_for_url(&state_clone, &url, "scheduled-refresh", Some("scheduled-refresh"))
+            refresh_screenshot_for_url(
+                &state_clone,
+                &url,
+                "scheduled-refresh",
+                Some(child_request_id.as_str()),
+            )
                 .await
                 .image
                 .is_some()
@@ -821,6 +843,10 @@ fn resolve_request_id(headers: &HeaderMap) -> String {
         .map(ToString::to_string);
 
     value.unwrap_or_else(generate_request_id)
+}
+
+fn scheduled_refresh_child_request_id(parent_request_id: &str, index: usize) -> String {
+    format!("{parent_request_id}-scheduled-{index}")
 }
 
 fn value_for_url_logging(url: &Url, mode: UrlLogMode) -> String {
@@ -1082,22 +1108,59 @@ async fn refresh_screenshot_for_url(
                 } else {
                     Some("cache_write_failed")
                 },
+                worker_status_code: None,
+                worker_status_class: None,
+                worker_failure_reason: None,
             }
         }
         Ok(None) => {
             let cache_write_ok = update_screenshot_cache_error(state, &key, "failed to capture screenshot").await;
+            log_event(
+                &state.config,
+                LogLevel::Info,
+                "screenshot_refresh_failed",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "source": source,
+                    "url": value_for_url_logging(target_url, state.config.log_preview_url_mode),
+                    "error_class": "screenshot_worker_failed",
+                    "worker_status_code": serde_json::Value::Null,
+                    "worker_status_class": serde_json::Value::Null,
+                    "worker_failure_reason": "upstream",
+                }),
+            );
             ScreenshotRefreshOutcome {
                 image: None,
                 cache_write_ok: Some(cache_write_ok),
                 error_class: Some("screenshot_worker_failed"),
+                worker_status_code: None,
+                worker_status_class: None,
+                worker_failure_reason: Some("upstream"),
             }
         }
-        Err(error_class) => {
+        Err(error) => {
             let cache_write_ok = update_screenshot_cache_error(state, &key, "failed to capture screenshot").await;
+            log_event(
+                &state.config,
+                LogLevel::Info,
+                "screenshot_refresh_failed",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "source": source,
+                    "url": value_for_url_logging(target_url, state.config.log_preview_url_mode),
+                    "error_class": error.error_class,
+                    "worker_status_code": error.status_code,
+                    "worker_status_class": error.status_class,
+                    "worker_failure_reason": error.failure_reason,
+                }),
+            );
             ScreenshotRefreshOutcome {
                 image: None,
                 cache_write_ok: Some(cache_write_ok),
-                error_class: Some(error_class),
+                error_class: Some(error.error_class),
+                worker_status_code: error.status_code,
+                worker_status_class: error.status_class,
+                worker_failure_reason: error.failure_reason,
             }
         }
     }
@@ -1145,6 +1208,9 @@ async fn resolve_screenshot_image_for_preview(
                 worker_succeeded: false,
                 cache_write_ok: None,
                 error_class: None,
+                worker_status_code: None,
+                worker_status_class: None,
+                worker_failure_reason: None,
             }
         }
         ScreenshotCacheDecision::StaleWithinGrace => {
@@ -1158,6 +1224,9 @@ async fn resolve_screenshot_image_for_preview(
                     worker_succeeded: false,
                     cache_write_ok: None,
                     error_class: None,
+                    worker_status_code: None,
+                    worker_status_class: None,
+                    worker_failure_reason: None,
                 }
             } else {
                 ScreenshotFallbackOutcome {
@@ -1168,6 +1237,9 @@ async fn resolve_screenshot_image_for_preview(
                     worker_succeeded: false,
                     cache_write_ok: None,
                     error_class: Some("screenshot_cache_missing"),
+                    worker_status_code: None,
+                    worker_status_class: None,
+                    worker_failure_reason: None,
                 }
             }
         }
@@ -1188,6 +1260,9 @@ async fn resolve_screenshot_image_for_preview(
                 worker_succeeded,
                 cache_write_ok: refreshed.cache_write_ok,
                 error_class: refreshed.error_class,
+                worker_status_code: refreshed.worker_status_code,
+                worker_status_class: refreshed.worker_status_class,
+                worker_failure_reason: refreshed.worker_failure_reason,
             }
         }
     }
@@ -1393,21 +1468,36 @@ async fn fetch_screenshot_image(
     target_url: &Url,
     config: &PreviewRuntimeConfig,
     request_id: Option<&str>,
-) -> Result<Option<String>, &'static str> {
+) -> Result<Option<String>, ScreenshotWorkerFailure> {
     let worker_base_url = config
         .screenshot_worker_url
         .as_ref()
-        .ok_or("screenshot_worker_unconfigured")?;
+        .ok_or(ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_unconfigured",
+            status_code: None,
+            status_class: None,
+            failure_reason: Some("validation"),
+        })?;
     let capture_url = worker_base_url
         .join("capture")
-        .map_err(|_| "screenshot_worker_failed")?;
+        .map_err(|_| ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_failed",
+            status_code: None,
+            status_class: None,
+            failure_reason: Some("validation"),
+        })?;
     let client = reqwest::Client::builder()
         .timeout(config.screenshot_worker_timeout)
         .connect_timeout(config.connect_timeout)
         .redirect(Policy::none())
         .user_agent(USER_AGENT)
         .build()
-        .map_err(|_| "screenshot_worker_failed")?;
+        .map_err(|_| ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_failed",
+            status_code: None,
+            status_class: None,
+            failure_reason: Some("upstream"),
+        })?;
 
     let mut request = client.get(capture_url).query(&[("url", target_url.as_str())]);
     if let Some(token) = config.screenshot_worker_token.as_ref() {
@@ -1420,23 +1510,80 @@ async fn fetch_screenshot_image(
     let response = request
         .send()
         .await
-        .map_err(|_| "screenshot_worker_failed")?;
+        .map_err(|_| ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_failed",
+            status_code: None,
+            status_class: None,
+            failure_reason: Some("upstream"),
+        })?;
     if !response.status().is_success() {
-        return Err("screenshot_worker_failed");
+        let status = response.status();
+        return Err(ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_failed",
+            status_code: Some(status.as_u16()),
+            status_class: Some(http_status_class(status)),
+            failure_reason: Some(classify_worker_failure_reason(status)),
+        });
     }
 
     let payload = response
         .json::<ScreenshotWorkerCaptureResponse>()
         .await
-        .map_err(|_| "screenshot_worker_failed")?;
+        .map_err(|_| ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_failed",
+            status_code: None,
+            status_class: None,
+            failure_reason: Some("upstream"),
+        })?;
     if !payload.ok {
-        return Err("screenshot_worker_failed");
+        return Err(ScreenshotWorkerFailure {
+            error_class: "screenshot_worker_failed",
+            status_code: None,
+            status_class: None,
+            failure_reason: Some("upstream"),
+        });
     }
 
     Ok(payload
         .image
         .or(payload.image_data_url)
         .and_then(normalize_text))
+}
+
+fn http_status_class(status: StatusCode) -> &'static str {
+    if status.is_informational() {
+        return "1xx";
+    }
+
+    if status.is_success() {
+        return "2xx";
+    }
+
+    if status.is_redirection() {
+        return "3xx";
+    }
+
+    if status.is_client_error() {
+        return "4xx";
+    }
+
+    if status.is_server_error() {
+        return "5xx";
+    }
+
+    "unknown"
+}
+
+fn classify_worker_failure_reason(status: StatusCode) -> &'static str {
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return "auth";
+    }
+
+    if status.is_client_error() {
+        return "validation";
+    }
+
+    "upstream"
 }
 
 fn build_preview_client(

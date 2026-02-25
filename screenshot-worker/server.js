@@ -102,6 +102,71 @@ function sanitizeUrlForLogs(value) {
   }
 }
 
+function classifyCaptureError(error) {
+  if (!error || typeof error !== "object") {
+    return { errorClass: "unknown_error" };
+  }
+
+  const errorName = typeof error.name === "string" ? error.name : "";
+  const errorCode = typeof error.code === "string" ? error.code : "";
+  const rawMessage = typeof error.message === "string" ? error.message : "";
+  const message = rawMessage.toLowerCase();
+  const normalizedCode = errorCode.toLowerCase();
+  const normalizedName = errorName.toLowerCase();
+
+  if (
+    normalizedCode.includes("timeout") ||
+    normalizedName.includes("timeout") ||
+    message.includes("timeout")
+  ) {
+    return {
+      errorClass: "playwright_timeout",
+      reason: sanitizeErrorReason(errorCode || errorName || "timeout"),
+    };
+  }
+
+  if (
+    message.includes("navigation") ||
+    message.includes("net::") ||
+    message.includes("page.goto")
+  ) {
+    return {
+      errorClass: "navigation_failed",
+      reason: sanitizeErrorReason(errorCode || errorName || "navigation"),
+    };
+  }
+
+  if (message.includes("screenshot") || message.includes("page.screenshot")) {
+    return {
+      errorClass: "screenshot_failed",
+      reason: sanitizeErrorReason(errorCode || errorName || "screenshot"),
+    };
+  }
+
+  return {
+    errorClass: "unknown_error",
+    reason: sanitizeErrorReason(errorCode || errorName),
+  };
+}
+
+function sanitizeErrorReason(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized.slice(0, 64);
+}
+
 function readOptionalString(name) {
   const value = process.env[name];
   if (typeof value !== "string") {
@@ -565,11 +630,13 @@ const server = http.createServer(async (req, res) => {
     const image = await captureScreenshotAsDataUrl(validation.value, requestId);
     jsonResponse(res, 200, { ok: true, image }, context);
   } catch (error) {
+    const classification = classifyCaptureError(error);
     logEvent("info", "capture_failed", {
       request_id: requestId,
       target_url: sanitizeUrlForLogs(rawTargetUrl),
       reason: "capture_failed",
-      error: error instanceof Error ? error.message : "unknown",
+      error_class: classification.errorClass,
+      error_reason: classification.reason,
     });
     jsonResponse(res, 502, { ok: false, error: "failed to capture screenshot" }, context);
   }
