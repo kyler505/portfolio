@@ -646,6 +646,7 @@ mod frontend {
     #[function_component(App)]
     fn app() -> Html {
         let theme = use_state(resolve_theme);
+        let theme_icon_cycle = use_state(|| 0u32);
         let active_metric = use_state(|| current_metrics()[0].clone());
         let metric_cursor = use_mut_ref(|| 0usize);
         let preview_card = use_state(PreviewCardState::hidden);
@@ -666,11 +667,13 @@ mod frontend {
 
         let on_toggle = {
             let theme = theme.clone();
+            let theme_icon_cycle = theme_icon_cycle.clone();
             Callback::from(move |_| {
                 let next = (*theme).toggled();
                 persist_theme(next);
                 apply_theme(next);
                 theme.set(next);
+                theme_icon_cycle.set((*theme_icon_cycle).wrapping_add(1));
             })
         };
 
@@ -917,6 +920,7 @@ mod frontend {
             "--preview-x: {:.2}px; --preview-y: {:.2}px;",
             preview_card.x, preview_card.y
         );
+        let theme_icon_key = format!("theme-icon-{}", *theme_icon_cycle);
         let metric_key = format!("{}::{}", active_metric.value, active_metric.label);
 
         html! {
@@ -932,7 +936,7 @@ mod frontend {
                             aria-pressed={(*theme).pressed().to_string()}
                             onclick={on_toggle}
                         >
-                            <span class="theme-toggle-icon" aria-hidden="true">{theme_toggle_icon(*theme)}</span>
+                            <span key={theme_icon_key} class="theme-toggle-icon" aria-hidden="true">{theme_toggle_icon(*theme)}</span>
                         </button>
                     </header>
 
