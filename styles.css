@@ -98,7 +98,7 @@ h3 {
 .theme-toggle {
   appearance: none;
   background: none;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text);
   cursor: pointer;
