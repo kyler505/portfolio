@@ -917,6 +917,7 @@ mod frontend {
             "--preview-x: {:.2}px; --preview-y: {:.2}px;",
             preview_card.x, preview_card.y
         );
+        let metric_key = format!("{}::{}", active_metric.value, active_metric.label);
 
         html! {
             <>
@@ -1062,8 +1063,12 @@ mod frontend {
 
                         <section aria-labelledby="now-heading" class="section-block now-metric">
                             <h2 id="now-heading">{"Metric"}</h2>
-                            <p class="metric-value">{active_metric.value.clone()}</p>
-                            <p class="metric-label">{active_metric.label}</p>
+                            <div class="metric-cycle">
+                                <div class="metric-entry" key={metric_key.clone()}>
+                                    <p class="metric-value">{active_metric.value.clone()}</p>
+                                    <p class="metric-label">{active_metric.label}</p>
+                                </div>
+                            </div>
                         </section>
                     </main>
                 </div>
