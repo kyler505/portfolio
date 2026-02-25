@@ -7,12 +7,29 @@ const { chromium } = require("playwright");
 
 const DEFAULT_PORT = 3001;
 const DEFAULT_CAPTURE_TIMEOUT_MS = 8000;
+const DEFAULT_NAVIGATION_TIMEOUT_MS = 7000;
+const DEFAULT_SCREENSHOT_TIMEOUT_MS = 12000;
+const DEFAULT_SETTLE_WAIT_MS = 700;
 const DEFAULT_DNS_LOOKUP_TIMEOUT_MS = 2000;
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1366, height: 768 });
+const DEFAULT_BROWSER_LOCALE = "en-US";
+const DEFAULT_BROWSER_TIMEZONE = "America/New_York";
+const DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9";
+const DEFAULT_DESKTOP_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
+const COMMON_SECOND_LEVEL_SUFFIXES = new Set(["ac", "co", "com", "edu", "gov", "net", "org"]);
 const HEALTH_CHECK_PAYLOAD = Object.freeze({ ok: true, status: "up" });
 
 const port = readBoundedInt("PORT", DEFAULT_PORT, 1, 65535);
 const captureTimeoutMs = readBoundedInt("CAPTURE_TIMEOUT_MS", DEFAULT_CAPTURE_TIMEOUT_MS, 1000, 120000);
+const navigationTimeoutMs = readBoundedInt("CAPTURE_NAV_TIMEOUT_MS", DEFAULT_NAVIGATION_TIMEOUT_MS, 500, 120000);
+const screenshotTimeoutMs = readBoundedInt(
+  "CAPTURE_SCREENSHOT_TIMEOUT_MS",
+  DEFAULT_SCREENSHOT_TIMEOUT_MS,
+  500,
+  120000,
+);
+const settleWaitMs = readBoundedInt("CAPTURE_SETTLE_WAIT_MS", DEFAULT_SETTLE_WAIT_MS, 0, 15000);
 const dnsLookupTimeoutMs = readBoundedInt("DNS_LOOKUP_TIMEOUT_MS", DEFAULT_DNS_LOOKUP_TIMEOUT_MS, 100, 30000);
 const workerToken = readOptionalString("SCREENSHOT_WORKER_TOKEN");
 const logLevel = readLogLevel("LOG_LEVEL", "info");
@@ -165,6 +182,47 @@ function sanitizeErrorReason(value) {
   }
 
   return normalized.slice(0, 64);
+}
+
+function createCaptureTimeoutError(stage) {
+  const error = new Error(`capture timeout at ${stage}`);
+  error.code = "CAPTURE_TIMEOUT";
+  error.captureStage = stage;
+  return error;
+}
+
+function getRemainingBudget(deadlineMs) {
+  return deadlineMs - Date.now();
+}
+
+function reserveStageTimeout(configuredTimeoutMs, deadlineMs, stage) {
+  const remainingBudgetMs = getRemainingBudget(deadlineMs);
+  if (remainingBudgetMs <= 0) {
+    throw createCaptureTimeoutError(stage);
+  }
+
+  return Math.min(configuredTimeoutMs, remainingBudgetMs);
+}
+
+function waitFor(ms) {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function logCaptureStageTiming(requestId, targetUrl, stage, stageStartedAt, captureStartedAt, extra = {}) {
+  logEvent("info", "capture_stage_timing", {
+    request_id: requestId,
+    target_url: sanitizeUrlForLogs(targetUrl.toString()),
+    stage,
+    stage_duration_ms: Date.now() - stageStartedAt,
+    elapsed_ms: Date.now() - captureStartedAt,
+    ...extra,
+  });
 }
 
 function readOptionalString(name) {
@@ -326,6 +384,43 @@ function parseIpv4MappedIpv6(address) {
   return parseIpv4(suffix) ? suffix : null;
 }
 
+function isSubdomainOrExactHost(host, candidateBase) {
+  return host === candidateBase || host.endsWith(`.${candidateBase}`);
+}
+
+function getRegistrableDomain(host) {
+  if (net.isIP(host)) {
+    return null;
+  }
+
+  const labels = host.toLowerCase().split(".").filter((label) => label.length > 0);
+  if (labels.length < 2) {
+    return null;
+  }
+
+  const topLevelLabel = labels[labels.length - 1];
+  const secondLevelLabel = labels[labels.length - 2];
+  const shouldUseThreeLabels =
+    topLevelLabel.length === 2 && COMMON_SECOND_LEVEL_SUFFIXES.has(secondLevelLabel) && labels.length >= 3;
+
+  const suffixLength = shouldUseThreeLabels ? 3 : 2;
+  return labels.slice(-suffixLength).join(".");
+}
+
+function isAllowedMainFrameRedirectHost(host, requiredMainFrameHost) {
+  if (isSubdomainOrExactHost(host, requiredMainFrameHost) || isSubdomainOrExactHost(requiredMainFrameHost, host)) {
+    return true;
+  }
+
+  const hostRegistrableDomain = getRegistrableDomain(host);
+  const requiredRegistrableDomain = getRegistrableDomain(requiredMainFrameHost);
+  if (!hostRegistrableDomain || !requiredRegistrableDomain) {
+    return false;
+  }
+
+  return hostRegistrableDomain === requiredRegistrableDomain;
+}
+
 function isBlockedIpv6(address) {
   const normalized = address.trim().toLowerCase();
   if (normalized === "::" || normalized === "::1") {
@@ -421,8 +516,8 @@ async function validateTargetUrlWithPolicy(rawUrl, requiredMainFrameHost) {
     return { error: "local addresses are not allowed", reason: "blocked_ip" };
   }
 
-  if (requiredMainFrameHost && host !== requiredMainFrameHost) {
-    return { error: "main-frame redirects must remain on the original host", reason: "redirect_host_block" };
+  if (requiredMainFrameHost && !isAllowedMainFrameRedirectHost(host, requiredMainFrameHost)) {
+    return { error: "main-frame redirects must remain on the original domain", reason: "redirect_host_block" };
   }
 
   if (net.isIP(host)) {
@@ -502,8 +597,18 @@ async function getBrowser() {
 
 async function captureScreenshotAsDataUrl(targetUrl, requestId) {
   const browser = await getBrowser();
-  const context = await browser.newContext({ viewport: DEFAULT_VIEWPORT });
+  const context = await browser.newContext({
+    viewport: DEFAULT_VIEWPORT,
+    locale: DEFAULT_BROWSER_LOCALE,
+    timezoneId: DEFAULT_BROWSER_TIMEZONE,
+    userAgent: DEFAULT_DESKTOP_USER_AGENT,
+    extraHTTPHeaders: {
+      "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
+    },
+  });
   const mainFrameHost = targetUrl.hostname.toLowerCase();
+  const captureStartedAt = Date.now();
+  const captureDeadlineMs = captureStartedAt + captureTimeoutMs;
 
   try {
     const page = await context.newPage();
@@ -523,30 +628,66 @@ async function captureScreenshotAsDataUrl(targetUrl, requestId) {
       }
     });
 
-    page.setDefaultNavigationTimeout(captureTimeoutMs);
+    page.setDefaultNavigationTimeout(Math.min(navigationTimeoutMs, captureTimeoutMs));
+    page.setDefaultTimeout(Math.min(screenshotTimeoutMs, captureTimeoutMs));
     logEvent("info", "capture_goto_start", {
       request_id: requestId,
       url: sanitizeUrlForLogs(targetUrl.toString()),
+      wait_until: "domcontentloaded",
+      navigation_timeout_ms: Math.min(navigationTimeoutMs, captureTimeoutMs),
+      total_timeout_ms: captureTimeoutMs,
     });
+    const gotoStartedAt = Date.now();
+    const gotoTimeoutMs = reserveStageTimeout(navigationTimeoutMs, captureDeadlineMs, "goto");
     await page.goto(targetUrl.toString(), {
-      timeout: captureTimeoutMs,
-      waitUntil: "networkidle",
+      timeout: gotoTimeoutMs,
+      waitUntil: "domcontentloaded",
     });
     logEvent("info", "capture_goto_ok", {
       request_id: requestId,
       url: sanitizeUrlForLogs(targetUrl.toString()),
     });
+    logCaptureStageTiming(requestId, targetUrl, "goto", gotoStartedAt, captureStartedAt, {
+      timeout_ms: gotoTimeoutMs,
+    });
+
+    const settleStartedAt = Date.now();
+    const settleBudgetMs = reserveStageTimeout(settleWaitMs, captureDeadlineMs, "settle_wait");
+    await waitFor(settleBudgetMs);
+    logCaptureStageTiming(requestId, targetUrl, "settle_wait", settleStartedAt, captureStartedAt, {
+      settle_wait_ms: settleBudgetMs,
+    });
+
+    const screenshotStartedAt = Date.now();
+    const screenshotBudgetMs = reserveStageTimeout(screenshotTimeoutMs, captureDeadlineMs, "screenshot");
+    logEvent("info", "capture_screenshot_start", {
+      request_id: requestId,
+      url: sanitizeUrlForLogs(targetUrl.toString()),
+      screenshot_timeout_ms: screenshotBudgetMs,
+    });
     const screenshot = await page.screenshot({
       type: "png",
       fullPage: false,
-      timeout: captureTimeoutMs,
+      timeout: screenshotBudgetMs,
     });
     logEvent("info", "capture_screenshot_ok", {
       request_id: requestId,
       url: sanitizeUrlForLogs(targetUrl.toString()),
     });
+    logCaptureStageTiming(requestId, targetUrl, "screenshot", screenshotStartedAt, captureStartedAt, {
+      screenshot_timeout_ms: screenshotBudgetMs,
+      bytes: screenshot.byteLength,
+    });
 
     return `data:image/png;base64,${Buffer.from(screenshot).toString("base64")}`;
+  } catch (error) {
+    logEvent("info", "capture_stage_failed", {
+      request_id: requestId,
+      target_url: sanitizeUrlForLogs(targetUrl.toString()),
+      stage: error && typeof error.captureStage === "string" ? error.captureStage : "unknown",
+      elapsed_ms: Date.now() - captureStartedAt,
+    });
+    throw error;
   } finally {
     await context.close();
   }
