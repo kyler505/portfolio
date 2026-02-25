@@ -322,7 +322,7 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "energy drinks consumed this year",
+                label: "energy drinks consumed (1/weekday)",
             },
             Metric {
                 value: AttrValue::from(COMMITS_THIS_MONTH_FALLBACK),
@@ -802,7 +802,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — ai flight search experience built in 2024 hours (tamuhack 25)"}</span>
+                                        <span class="muted">{" — ai flight search experience built in 24 hours (tamuhack 25)"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
