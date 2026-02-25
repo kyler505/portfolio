@@ -421,8 +421,13 @@ footer {
   }
 
   html[data-theme-switching="true"] body::before {
-    opacity: 0;
-    transform: translate3d(132%, 0, 0) skewX(-8deg);
+    animation: none !important;
+    transition: none !important;
+  }
+
+  html[data-theme-switching="true"] .page-shell {
+    animation: none !important;
+    transition: none !important;
   }
 }
 
