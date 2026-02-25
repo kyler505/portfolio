@@ -26,6 +26,7 @@ mod frontend {
     const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
     const PREVIEW_FALLBACK_TITLE: &str = "Preview unavailable";
+    const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -586,13 +587,13 @@ mod frontend {
                                 <ul class="row-list">
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505"
+                                            href="https://github.com/NujhatJalil/SHADE-project"
                                             label="Project SHADE"
                                             preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/shade.svg"),
-                                                alt: AttrValue::from("Project SHADE sequence model dashboard preview"),
-                                                title: AttrValue::from("Project SHADE"),
-                                                description: AttrValue::from("LSTM component for Austin heat-wave forecasting."),
+                                                src: AttrValue::from("/previews/og/project-shade-og.png"),
+                                                alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
+                                                title: AttrValue::from("GitHub - NujhatJalil/SHADE-project: The Systematic Heat Assessment and Data Evaluation Project @ Aggie Data Science Club (Fall 2025)"),
+                                                description: AttrValue::from("The Systematic Heat Assessment and Data Evaluation Project @ Aggie Data Science Club (Fall 2025) - NujhatJalil/SHADE-project"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -602,13 +603,13 @@ mod frontend {
                                     </li>
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505"
+                                            href="https://github.com/kyler505/tamuhack25_aa"
                                             label="FlightPath"
                                             preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/flightpath.svg"),
-                                                alt: AttrValue::from("FlightPath assisted trip planner interface preview"),
-                                                title: AttrValue::from("FlightPath"),
-                                                description: AttrValue::from("AI flight search experience from TAMUHack 2025."),
+                                                src: AttrValue::from("/previews/og/flightpath-og.png"),
+                                                alt: AttrValue::from("GitHub Open Graph image for FlightPath repository"),
+                                                title: AttrValue::from("GitHub - kyler505/tamuhack25_aa: TAMUHACK 2025 Challenge - Kyler Cao, Brady Nguyen, Erix Huynh, Kevin Nguyen"),
+                                                description: AttrValue::from("TAMUHACK 2025 Challenge - Kyler Cao, Brady Nguyen, Erix Huynh, Kevin Nguyen - kyler505/tamuhack25_aa"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -618,13 +619,13 @@ mod frontend {
                                     </li>
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505"
+                                            href="https://github.com/kyler505/techhub-dns"
                                             label="TechHub Delivery Platform"
                                             preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/techhub.svg"),
-                                                alt: AttrValue::from("TechHub delivery operations console preview"),
-                                                title: AttrValue::from("TechHub Delivery Platform"),
-                                                description: AttrValue::from("Internal system handling 150+ monthly orders."),
+                                                src: AttrValue::from("/previews/og/techhub-delivery-platform-og.png"),
+                                                alt: AttrValue::from("GitHub Open Graph image for TechHub Delivery Platform repository"),
+                                                title: AttrValue::from("GitHub - kyler505/techhub-dns: TechHub Delivery Notification Service Test App"),
+                                                description: AttrValue::from("TechHub Delivery Notification Service Test App. Contribute to kyler505/techhub-dns development by creating an account on GitHub."),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -642,6 +643,12 @@ mod frontend {
                                         <ExternalLink
                                             href="https://github.com/kyler505"
                                             label="GitHub"
+                                            preview={PreviewAsset {
+                                                src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
+                                                alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
+                                                title: AttrValue::from("GitHub"),
+                                                description: AttrValue::from("Kyler505 profile and repositories."),
+                                            }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
