@@ -95,6 +95,24 @@ SCREENSHOT_REFRESH_TOKEN=dev-token \
 - enforces main-frame document navigation to remain on the original hostname (redirects to other hosts are blocked),
 - aborts requests fail-closed when URL validation is uncertain or invalid.
 
+## Logging and screenshot fallback debugging
+
+Both services emit structured JSON logs for preview/capture debugging.
+
+Key env vars:
+- `LOG_LEVEL` (`info` default, `debug` for verbose stage/route-abort logs)
+- `LOG_PREVIEW_URL_MODE` (`host` default, `full` to include full URL in logs)
+- `SCREENSHOT_WORKER_URL` (backend -> worker capture endpoint base)
+
+Where to look in Render:
+- `portfolio` service logs for `preview_*` and `refresh_*` events.
+- `screenshot-worker` service logs for `worker_request_*`, `capture_*`, and `capture_route_abort` events.
+
+How to trace one failing request:
+1. Find a failing `preview_request_*` event in `portfolio` logs and copy `request_id`.
+2. Search that `request_id` in `screenshot-worker` logs to see `capture_validation_failed`, `capture_goto_start`, `capture_failed`, or `capture_screenshot_ok`.
+3. Use matching `error_class`/`reason` values (`invalid_url`, `upstream_fetch_failed`, `screenshot_worker_failed`, `cache_write_failed`, etc.) to isolate the failure stage.
+
 ## Verification commands
 
 ```bash

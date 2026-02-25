@@ -149,3 +149,19 @@
 - Added a persistent screenshot cache index (disk + in-memory mirror) with fresh/stale/missing decision branches for `/api/preview` fallback behavior.
 - Added authenticated `POST /internal/refresh-screenshots` batch refresh using shared URL safety checks and bounded concurrency.
 - Added `config/preview-urls.json`, a cron caller script, Render cron wiring, and README updates for hybrid behavior + env configuration.
+
+## 2026-02-25 screenshot fallback structured logging hardening
+- [x] Restate goal + acceptance criteria
+- [x] Read backend preview/refresh and worker capture pipelines
+- [x] Add structured backend logs with request-id propagation and safe URL logging controls
+- [x] Add structured worker logs with request lifecycle, validation, and Playwright stage events
+- [x] Update README logging/debug guidance
+- [x] Run verification (`cargo check`, `cargo test backend::tests`, `trunk build --release`, `node --check screenshot-worker/server.js`)
+- [ ] Commit and push to `origin/main`
+
+### Acceptance Criteria
+- `/api/preview` logs request lifecycle, cache decisions, OG fetch outcome, screenshot fallback outcome, and response timings.
+- `/internal/refresh-screenshots` logs auth/config failures and completion summary counts.
+- Backend and worker correlate logs via `x-request-id`; backend forwards request id to worker.
+- Logging defaults avoid sensitive URL query output, with env-tunable URL log mode.
+- Worker logs capture lifecycle, validation reasons, route abort reasons, and Playwright stage events without token leakage.
