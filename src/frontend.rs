@@ -4,18 +4,26 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{window, FocusEvent, MouseEvent, Storage};
+use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
 use yew::prelude::*;
 
 const THEME_KEY: &str = "portfolio-theme";
-const PREVIEW_WIDTH: f64 = 420.0;
-const PREVIEW_HEIGHT: f64 = 268.0;
 const PREVIEW_GUTTER: f64 = 14.0;
 const PREVIEW_CURSOR_OFFSET_X: f64 = 14.0;
 const PREVIEW_CURSOR_OFFSET_Y: f64 = 12.0;
+const PREVIEW_FOCUS_Y: f64 = 96.0;
+const PREVIEW_COLUMN_WIDTH: f64 = 640.0;
+const PREVIEW_INITIAL_WIDTH: f64 = 360.0;
+const PREVIEW_INITIAL_HEIGHT: f64 = 260.0;
 const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
 const PREVIEW_DEFAULT_ALT: &str = "Project preview";
 const PREVIEW_FAILURE_RETRY_MS: f64 = 10_000.0;
+
+#[derive(Clone, Copy, PartialEq)]
+enum PreviewAnchor {
+    Pointer { client_x: i32, client_y: i32 },
+    Focus,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Theme {
@@ -169,30 +177,51 @@ fn viewport_size() -> (f64, f64) {
     (width, height)
 }
 
-fn clamp_preview_position(x: f64, y: f64) -> (f64, f64) {
+fn clamp_preview_position(x: f64, y: f64, preview_width: f64, preview_height: f64) -> (f64, f64) {
     let (viewport_width, viewport_height) = viewport_size();
     let min_x = PREVIEW_GUTTER;
     let min_y = PREVIEW_GUTTER;
-    let max_x = (viewport_width - PREVIEW_WIDTH - PREVIEW_GUTTER).max(min_x);
-    let max_y = (viewport_height - PREVIEW_HEIGHT - PREVIEW_GUTTER).max(min_y);
+    let max_x = (viewport_width - preview_width - PREVIEW_GUTTER).max(min_x);
+    let max_y = (viewport_height - preview_height - PREVIEW_GUTTER).max(min_y);
 
     (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
 }
 
-fn pointer_preview_position(client_x: i32, client_y: i32) -> (f64, f64) {
-    clamp_preview_position(
-        f64::from(client_x) + PREVIEW_CURSOR_OFFSET_X,
-        f64::from(client_y) + PREVIEW_CURSOR_OFFSET_Y,
-    )
+fn focus_anchor_position() -> (f64, f64) {
+    let (viewport_width, _) = viewport_size();
+    let column_left = ((viewport_width - PREVIEW_COLUMN_WIDTH) / 2.0).max(PREVIEW_GUTTER);
+    (column_left + PREVIEW_COLUMN_WIDTH, PREVIEW_FOCUS_Y)
 }
 
-fn focus_preview_position() -> (f64, f64) {
-    let (viewport_width, _) = viewport_size();
-    let column_width = 640.0;
-    let column_left = ((viewport_width - column_width) / 2.0).max(PREVIEW_GUTTER);
-    let x = column_left + column_width - PREVIEW_WIDTH;
+fn preview_position_from_anchor(
+    anchor: PreviewAnchor,
+    preview_width: f64,
+    preview_height: f64,
+) -> (f64, f64) {
+    match anchor {
+        PreviewAnchor::Pointer { client_x, client_y } => clamp_preview_position(
+            f64::from(client_x) + PREVIEW_CURSOR_OFFSET_X,
+            f64::from(client_y) + PREVIEW_CURSOR_OFFSET_Y,
+            preview_width,
+            preview_height,
+        ),
+        PreviewAnchor::Focus => {
+            let (focus_x, focus_y) = focus_anchor_position();
+            clamp_preview_position(focus_x - preview_width, focus_y, preview_width, preview_height)
+        }
+    }
+}
 
-    clamp_preview_position(x, 96.0)
+fn preview_card_size(preview_card_ref: &NodeRef) -> Option<(f64, f64)> {
+    let element = preview_card_ref.cast::<HtmlElement>()?;
+    let width = f64::from(element.offset_width());
+    let height = f64::from(element.offset_height());
+
+    if width > 0.0 && height > 0.0 {
+        Some((width, height))
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -242,6 +271,44 @@ impl PreviewCardState {
             y,
         }
     }
+}
+
+fn is_preview_eligible_web_link(href: &str) -> bool {
+    let trimmed = href.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return false;
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    normalized.starts_with("http://") || normalized.starts_with("https://")
+}
+
+fn resolve_preview_asset(
+    href: &AttrValue,
+    label: &AttrValue,
+    explicit_preview: Option<PreviewAsset>,
+) -> Option<PreviewAsset> {
+    let href_text = href.to_string();
+    let eligible_web_link = is_preview_eligible_web_link(&href_text);
+
+    if let Some(mut preview_asset) = explicit_preview {
+        if preview_asset.metadata_url.is_none() && eligible_web_link {
+            preview_asset.metadata_url = Some(href.clone());
+        }
+        return Some(preview_asset);
+    }
+
+    if !eligible_web_link {
+        return None;
+    }
+
+    Some(PreviewAsset {
+        src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
+        alt: AttrValue::from(format!("{} preview placeholder", label)),
+        title: AttrValue::from("Loading preview..."),
+        description: AttrValue::from("Fetching link details..."),
+        metadata_url: Some(href.clone()),
+    })
 }
 
 #[derive(Clone)]
@@ -349,7 +416,10 @@ fn hydrate_preview(
         let mut next_cache = (*preview_cache_handle).clone();
         match remote.as_ref() {
             Some(payload) => {
-                next_cache.insert(metadata_url.clone(), PreviewCacheEntry::Ready(payload.clone()));
+                next_cache.insert(
+                    metadata_url.clone(),
+                    PreviewCacheEntry::Ready(payload.clone()),
+                );
             }
             None => {
                 next_cache.insert(
@@ -374,18 +444,17 @@ struct ExternalLinkProps {
     label: AttrValue,
     #[prop_or_default]
     preview: Option<PreviewAsset>,
-    #[prop_or_default]
     on_pointer_preview: Callback<(PreviewAsset, i32, i32)>,
-    #[prop_or_default]
     on_focus_preview: Callback<PreviewAsset>,
-    #[prop_or_default]
     on_hide_preview: Callback<()>,
 }
 
 #[function_component(ExternalLink)]
 fn external_link(props: &ExternalLinkProps) -> Html {
+    let preview = resolve_preview_asset(&props.href, &props.label, props.preview.clone());
+
     let onmouseenter = {
-        let preview = props.preview.clone();
+        let preview = preview.clone();
         let on_pointer_preview = props.on_pointer_preview.clone();
         Callback::from(move |event: MouseEvent| {
             if let Some(preview_asset) = preview.clone() {
@@ -395,7 +464,7 @@ fn external_link(props: &ExternalLinkProps) -> Html {
     };
 
     let onmousemove = {
-        let preview = props.preview.clone();
+        let preview = preview.clone();
         let on_pointer_preview = props.on_pointer_preview.clone();
         Callback::from(move |event: MouseEvent| {
             if let Some(preview_asset) = preview.clone() {
@@ -410,7 +479,7 @@ fn external_link(props: &ExternalLinkProps) -> Html {
     };
 
     let onfocus = {
-        let preview = props.preview.clone();
+        let preview = preview.clone();
         let on_focus_preview = props.on_focus_preview.clone();
         Callback::from(move |_event: FocusEvent| {
             if let Some(preview_asset) = preview.clone() {
@@ -437,7 +506,6 @@ fn external_link(props: &ExternalLinkProps) -> Html {
             onblur={onblur}
         >
             {props.label.clone()}
-            <span class="external-mark" aria-hidden="true">{"↗"}</span>
             <span class="sr-only">{" (opens in a new tab)"}</span>
         </a>
     }
@@ -447,6 +515,9 @@ fn external_link(props: &ExternalLinkProps) -> Html {
 fn app() -> Html {
     let theme = use_state(resolve_theme);
     let preview_card = use_state(PreviewCardState::hidden);
+    let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
+    let preview_card_ref = use_node_ref();
+    let preview_size = use_state(|| (PREVIEW_INITIAL_WIDTH, PREVIEW_INITIAL_HEIGHT));
     let preview_cache = use_state(HashMap::<String, PreviewCacheEntry>::new);
 
     {
@@ -469,11 +540,16 @@ fn app() -> Html {
 
     let on_pointer_preview = {
         let preview_card = preview_card.clone();
+        let preview_anchor = preview_anchor.clone();
+        let preview_size = preview_size.clone();
         let preview_cache = preview_cache.clone();
         Callback::from(
             move |(asset, client_x, client_y): (PreviewAsset, i32, i32)| {
                 let metadata_url = asset.metadata_url.as_ref().map(|value| value.to_string());
-                let (x, y) = pointer_preview_position(client_x, client_y);
+                let anchor = PreviewAnchor::Pointer { client_x, client_y };
+                preview_anchor.set(Some(anchor));
+                let (preview_width, preview_height) = *preview_size;
+                let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
                 preview_card.set(PreviewCardState::from_asset(asset, x, y));
 
                 if let Some(metadata_url) = metadata_url {
@@ -485,10 +561,15 @@ fn app() -> Html {
 
     let on_focus_preview = {
         let preview_card = preview_card.clone();
+        let preview_anchor = preview_anchor.clone();
+        let preview_size = preview_size.clone();
         let preview_cache = preview_cache.clone();
         Callback::from(move |asset: PreviewAsset| {
             let metadata_url = asset.metadata_url.as_ref().map(|value| value.to_string());
-            let (x, y) = focus_preview_position();
+            let anchor = PreviewAnchor::Focus;
+            preview_anchor.set(Some(anchor));
+            let (preview_width, preview_height) = *preview_size;
+            let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
             preview_card.set(PreviewCardState::from_asset(asset, x, y));
 
             if let Some(metadata_url) = metadata_url {
@@ -499,10 +580,89 @@ fn app() -> Html {
 
     let on_hide_preview = {
         let preview_card = preview_card.clone();
+        let preview_anchor = preview_anchor.clone();
         Callback::from(move |_| {
+            preview_anchor.set(None);
             let mut next = (*preview_card).clone();
             next.visible = false;
             preview_card.set(next);
+        })
+    };
+
+    let reclamp_preview = {
+        let preview_anchor = preview_anchor.clone();
+        let preview_card = preview_card.clone();
+        let preview_card_ref = preview_card_ref.clone();
+        let preview_size = preview_size.clone();
+        Callback::from(move |_| {
+            let Some(anchor) = *preview_anchor else {
+                return;
+            };
+
+            let current = (*preview_card).clone();
+            if !current.visible {
+                return;
+            }
+
+            let measured_size = preview_card_size(&preview_card_ref).unwrap_or(*preview_size);
+            if measured_size != *preview_size {
+                preview_size.set(measured_size);
+            }
+
+            let (x, y) = preview_position_from_anchor(anchor, measured_size.0, measured_size.1);
+            if (current.x - x).abs() < 0.1 && (current.y - y).abs() < 0.1 {
+                return;
+            }
+
+            let mut next = current;
+            next.x = x;
+            next.y = y;
+            preview_card.set(next);
+        })
+    };
+
+    {
+        let reclamp_preview = reclamp_preview.clone();
+        let preview_card = preview_card.clone();
+        use_effect_with(
+            (
+                (*preview_card).visible,
+                (*preview_card).src.clone(),
+                (*preview_card).title.clone(),
+                (*preview_card).description.clone(),
+            ),
+            move |_| {
+                reclamp_preview.emit(());
+                || ()
+            },
+        );
+    }
+
+    {
+        let reclamp_preview = reclamp_preview.clone();
+        use_effect(move || {
+            let win = window();
+            let resize_handler = Closure::<dyn FnMut()>::new(move || {
+                reclamp_preview.emit(());
+            });
+
+            if let Some(win) = win.as_ref() {
+                win.set_onresize(Some(resize_handler.as_ref().unchecked_ref()));
+            }
+
+            move || {
+                if let Some(win) = win {
+                    win.set_onresize(None);
+                }
+                drop(resize_handler);
+            }
+        });
+    }
+
+    let on_preview_media_loaded = {
+        let reclamp_preview = reclamp_preview.clone();
+        Callback::from(move |_| {
+            reclamp_preview.emit(());
         })
     };
 
@@ -533,7 +693,13 @@ fn app() -> Html {
                         <h2 id="about-heading">{"About"}</h2>
                         <p>
                             {"Computer Science student at Texas A&M building dependable software for campus operations at "}
-                            <ExternalLink href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html" label="TechHub" />
+                            <ExternalLink
+                                href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
+                                label="TechHub"
+                                on_pointer_preview={on_pointer_preview.clone()}
+                                on_focus_preview={on_focus_preview.clone()}
+                                on_hide_preview={on_hide_preview.clone()}
+                            />
                             {" and practical machine learning projects."}
                         </p>
                     </section>
@@ -553,7 +719,7 @@ fn app() -> Html {
                                             alt: AttrValue::from("Project SHADE sequence model dashboard preview"),
                                             title: AttrValue::from("Project SHADE"),
                                             description: AttrValue::from("LSTM component for Austin heat-wave forecasting."),
-                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505")),
+                                            metadata_url: Some(AttrValue::from("https://github.com/NujhatJalil/SHADE-project")),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -570,7 +736,7 @@ fn app() -> Html {
                                             alt: AttrValue::from("FlightPath assisted trip planner interface preview"),
                                             title: AttrValue::from("FlightPath"),
                                             description: AttrValue::from("AI flight search experience from TAMUHack 2025."),
-                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505")),
+                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505/tamuhack25_aa")),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -587,7 +753,7 @@ fn app() -> Html {
                                             alt: AttrValue::from("TechHub delivery operations console preview"),
                                             title: AttrValue::from("TechHub Delivery Platform"),
                                             description: AttrValue::from("Internal system handling 150+ monthly orders."),
-                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505")),
+                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505/techhub-dns")),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -602,15 +768,33 @@ fn app() -> Html {
                             <h3>{"Links"}</h3>
                             <ul class="row-list">
                                 <li>
-                                    <ExternalLink href="https://github.com/kyler505" label="GitHub" />
+                                    <ExternalLink
+                                        href="https://github.com/kyler505"
+                                        label="GitHub"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
                                     <span class="muted">{" — Code and experiments"}</span>
                                 </li>
                                 <li>
-                                    <ExternalLink href="https://www.linkedin.com/in/kylercao" label="LinkedIn" />
+                                    <ExternalLink
+                                        href="https://www.linkedin.com/in/kylercao"
+                                        label="LinkedIn"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
                                     <span class="muted">{" — Professional profile"}</span>
                                 </li>
                                 <li>
-                                    <ExternalLink href="/resume.pdf" label="Resume" />
+                                    <ExternalLink
+                                        href="/resume.pdf"
+                                        label="Resume"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
                                     <span class="muted">{" — Current PDF"}</span>
                                 </li>
                             </ul>
@@ -637,8 +821,16 @@ fn app() -> Html {
                 class={classes!("hover-preview", preview_card.visible.then_some("is-visible"))}
                 style={preview_style}
                 aria-hidden="true"
+                ref={preview_card_ref}
             >
-                <img class="hover-preview-media" src={preview_card.src.clone()} alt={preview_card.alt.clone()} loading="lazy" />
+                <img
+                    class="hover-preview-media"
+                    src={preview_card.src.clone()}
+                    alt={preview_card.alt.clone()}
+                    loading="lazy"
+                    onload={on_preview_media_loaded.clone()}
+                    onerror={on_preview_media_loaded}
+                />
                 <div class="hover-preview-copy">
                     <p class="hover-preview-title">{preview_card.title.clone()}</p>
                     <p class="hover-preview-description">{preview_card.description.clone()}</p>
