@@ -1,81 +1,10 @@
 services:
   - type: web
     name: portfolio
-    env: rust
+    env: static
     plan: free
     buildCommand: |
       rustup target add wasm32-unknown-unknown
       cargo install trunk --locked
       trunk build --release
-      cargo build --release
-    startCommand: ./target/release/portfolio
-    healthCheckPath: /
-    envVars:
-      - key: RUST_LOG
-        value: info
-      - key: SCREENSHOT_WORKER_URL
-        value: https://screenshot-worker-x78t.onrender.com
-      - key: SCREENSHOT_WORKER_TIMEOUT_MS
-        value: "8000"
-      - key: SCREENSHOT_WORKER_TOKEN
-        sync: false
-      - key: SCREENSHOT_TTL_SECONDS
-        value: "604800"
-      - key: SCREENSHOT_STALE_GRACE_SECONDS
-        value: "1209600"
-      - key: SCREENSHOT_CACHE_INDEX_PATH
-        value: /tmp/preview-cache.json
-      - key: SCREENSHOT_REFRESH_TOKEN
-        sync: false
-      - key: SCREENSHOT_URLS_CONFIG_PATH
-        value: config/preview-urls.json
-      - key: SCREENSHOT_REFRESH_CONCURRENCY
-        value: "3"
-      - key: PREVIEW_CACHE_TTL_SECONDS
-        value: "300"
-      - key: PREVIEW_CACHE_MAX_ENTRIES
-        value: "256"
-      - key: PREVIEW_RESPONSE_MAX_BYTES
-        value: "524288"
-      - key: PREVIEW_REQUEST_TIMEOUT_SECONDS
-        value: "6"
-      - key: PREVIEW_CONNECT_TIMEOUT_SECONDS
-        value: "3"
-      - key: PREVIEW_DNS_LOOKUP_TIMEOUT_SECONDS
-        value: "2"
-      - key: PREVIEW_MAX_REDIRECTS
-        value: "4"
-      - key: PREVIEW_MAX_RESOLVED_IP_ATTEMPTS
-        value: "3"
-
-  - type: web
-    name: screenshot-worker
-    env: node
-    plan: free
-    buildCommand: |
-      npm ci --prefix screenshot-worker --omit=dev
-      npx --prefix screenshot-worker playwright install chromium
-    startCommand: node screenshot-worker/server.js
-    healthCheckPath: /health
-    envVars:
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: "0"
-      - key: CAPTURE_TIMEOUT_MS
-        value: "8000"
-      - key: SCREENSHOT_WORKER_TOKEN
-        sync: false
-      - key: DNS_LOOKUP_TIMEOUT_MS
-        value: "2000"
-
-  - type: cron
-    name: preview-screenshot-refresh
-    env: node
-    plan: free
-    schedule: "0 3 * * *"
-    buildCommand: ""
-    startCommand: node scripts/refresh-screenshots.mjs
-    envVars:
-      - key: SCREENSHOT_REFRESH_ENDPOINT
-        value: https://portfolio-25qu.onrender.com/internal/refresh-screenshots
-      - key: SCREENSHOT_REFRESH_TOKEN
-        sync: false
+    staticPublishPath: dist

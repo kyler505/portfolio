@@ -1,9 +1,5 @@
-use gloo_net::http::Request;
-use js_sys::{encode_uri_component, Function, Reflect};
-use serde::Deserialize;
-use std::collections::HashMap;
+use js_sys::{Function, Reflect};
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
-use wasm_bindgen_futures::spawn_local;
 use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
 use yew::prelude::*;
 
@@ -17,11 +13,7 @@ const PREVIEW_INITIAL_WIDTH: f64 = 360.0;
 const PREVIEW_INITIAL_HEIGHT: f64 = 260.0;
 const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
 const PREVIEW_DEFAULT_ALT: &str = "Project preview";
-const PREVIEW_LOADING_TITLE: &str = "Loading preview...";
-const PREVIEW_LOADING_DESCRIPTION: &str = "Fetching link details...";
 const PREVIEW_FALLBACK_TITLE: &str = "Preview unavailable";
-const PREVIEW_FALLBACK_DESCRIPTION: &str = "Link details are unavailable right now.";
-const PREVIEW_FAILURE_RETRY_MS: f64 = 10_000.0;
 
 #[derive(Clone, Copy, PartialEq)]
 enum PreviewAnchor {
@@ -211,7 +203,12 @@ fn preview_position_from_anchor(
         ),
         PreviewAnchor::Focus => {
             let (focus_x, focus_y) = focus_anchor_position();
-            clamp_preview_position(focus_x - preview_width, focus_y, preview_width, preview_height)
+            clamp_preview_position(
+                focus_x - preview_width,
+                focus_y,
+                preview_width,
+                preview_height,
+            )
         }
     }
 }
@@ -234,7 +231,6 @@ struct PreviewAsset {
     alt: AttrValue,
     title: AttrValue,
     description: AttrValue,
-    metadata_url: Option<AttrValue>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -244,7 +240,6 @@ struct PreviewCardState {
     alt: AttrValue,
     title: AttrValue,
     description: AttrValue,
-    metadata_url: Option<String>,
     x: f64,
     y: f64,
 }
@@ -257,7 +252,6 @@ impl PreviewCardState {
             alt: AttrValue::from(PREVIEW_DEFAULT_ALT),
             title: AttrValue::from(PREVIEW_FALLBACK_TITLE),
             description: AttrValue::from("Hover over a project link to view details."),
-            metadata_url: None,
             x: PREVIEW_GUTTER,
             y: PREVIEW_GUTTER,
         }
@@ -270,7 +264,6 @@ impl PreviewCardState {
             alt: asset.alt,
             title: asset.title,
             description: asset.description,
-            metadata_url: asset.metadata_url.map(|value| value.to_string()),
             x,
             y,
         }
@@ -292,187 +285,20 @@ fn resolve_preview_asset(
     label: &AttrValue,
     explicit_preview: Option<PreviewAsset>,
 ) -> Option<PreviewAsset> {
-    let href_text = href.to_string();
-    let eligible_web_link = is_preview_eligible_web_link(&href_text);
-
-    if let Some(mut preview_asset) = explicit_preview {
-        if preview_asset.metadata_url.is_none() && eligible_web_link {
-            preview_asset.metadata_url = Some(href.clone());
-        }
+    if let Some(preview_asset) = explicit_preview {
         return Some(preview_asset);
     }
 
-    if !eligible_web_link {
+    if !is_preview_eligible_web_link(href.as_str()) {
         return None;
     }
 
     Some(PreviewAsset {
         src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
         alt: AttrValue::from(format!("{} preview placeholder", label)),
-        title: AttrValue::from(PREVIEW_LOADING_TITLE),
-        description: AttrValue::from(PREVIEW_LOADING_DESCRIPTION),
-        metadata_url: Some(href.clone()),
+        title: label.clone(),
+        description: AttrValue::from("External link preview"),
     })
-}
-
-#[derive(Clone)]
-struct ApiPreviewData {
-    title: Option<String>,
-    description: Option<String>,
-    image: Option<String>,
-}
-
-#[derive(Clone)]
-enum PreviewCacheEntry {
-    Ready(ApiPreviewData),
-    Pending,
-    Failed { retry_after_ms: f64 },
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiPreviewResponse {
-    ok: bool,
-    title: Option<String>,
-    description: Option<String>,
-    image: Option<String>,
-}
-
-async fn fetch_preview(url: &str) -> Option<ApiPreviewData> {
-    let encoded_url = encode_uri_component(url)
-        .as_string()
-        .unwrap_or_else(|| url.to_string());
-    let request_url = format!("/api/preview?url={encoded_url}");
-
-    let response = Request::get(&request_url).send().await.ok()?;
-    let payload = response.json::<ApiPreviewResponse>().await.ok()?;
-
-    if !payload.ok {
-        return None;
-    }
-
-    Some(ApiPreviewData {
-        title: payload.title,
-        description: payload.description,
-        image: payload.image,
-    })
-}
-
-fn apply_remote_preview(
-    preview_card: &UseStateHandle<PreviewCardState>,
-    metadata_url: &str,
-    remote: &ApiPreviewData,
-) {
-    let mut next: PreviewCardState = (**preview_card).clone();
-
-    if !next.visible || next.metadata_url.as_deref() != Some(metadata_url) {
-        return;
-    }
-
-    if let Some(title) = remote.title.as_deref() {
-        next.title = AttrValue::from(title.to_string());
-    }
-
-    if let Some(description) = remote.description.as_deref() {
-        next.description = AttrValue::from(description.to_string());
-    }
-
-    if let Some(image) = remote.image.as_deref() {
-        next.src = AttrValue::from(image.to_string());
-    }
-
-    if next.title.as_str() == PREVIEW_LOADING_TITLE {
-        next.title = AttrValue::from(PREVIEW_FALLBACK_TITLE);
-    }
-
-    if next.description.as_str() == PREVIEW_LOADING_DESCRIPTION {
-        next.description = AttrValue::from(PREVIEW_FALLBACK_DESCRIPTION);
-    }
-
-    preview_card.set(next);
-}
-
-fn apply_preview_hydration_fallback(preview_card: &UseStateHandle<PreviewCardState>, metadata_url: &str) {
-    let mut next: PreviewCardState = (**preview_card).clone();
-    if !next.visible || next.metadata_url.as_deref() != Some(metadata_url) {
-        return;
-    }
-
-    let mut changed = false;
-    if next.title.as_str() == PREVIEW_LOADING_TITLE {
-        next.title = AttrValue::from(PREVIEW_FALLBACK_TITLE);
-        changed = true;
-    }
-
-    if next.description.as_str() == PREVIEW_LOADING_DESCRIPTION {
-        next.description = AttrValue::from(PREVIEW_FALLBACK_DESCRIPTION);
-        changed = true;
-    }
-
-    if changed {
-        preview_card.set(next);
-    }
-}
-
-fn hydrate_preview(
-    preview_card: &UseStateHandle<PreviewCardState>,
-    preview_cache: &UseStateHandle<HashMap<String, PreviewCacheEntry>>,
-    metadata_url: &str,
-) {
-    if let Some(cached_entry) = preview_cache.get(metadata_url) {
-        match cached_entry {
-            PreviewCacheEntry::Ready(cached) => {
-                apply_remote_preview(preview_card, metadata_url, cached);
-                return;
-            }
-            PreviewCacheEntry::Pending => return,
-            PreviewCacheEntry::Failed { retry_after_ms } => {
-                if js_sys::Date::now() < *retry_after_ms {
-                    apply_preview_hydration_fallback(preview_card, metadata_url);
-                    return;
-                }
-            }
-        }
-    }
-
-    let metadata_url = metadata_url.to_string();
-    let preview_card_handle = preview_card.clone();
-    let preview_cache_handle = preview_cache.clone();
-
-    {
-        let mut next_cache = (**preview_cache).clone();
-        next_cache.insert(metadata_url.clone(), PreviewCacheEntry::Pending);
-        preview_cache.set(next_cache);
-    }
-
-    spawn_local(async move {
-        let remote = fetch_preview(&metadata_url).await;
-
-        let mut next_cache = (*preview_cache_handle).clone();
-        match remote.as_ref() {
-            Some(payload) => {
-                next_cache.insert(
-                    metadata_url.clone(),
-                    PreviewCacheEntry::Ready(payload.clone()),
-                );
-            }
-            None => {
-                next_cache.insert(
-                    metadata_url.clone(),
-                    PreviewCacheEntry::Failed {
-                        retry_after_ms: js_sys::Date::now() + PREVIEW_FAILURE_RETRY_MS,
-                    },
-                );
-            }
-        }
-        preview_cache_handle.set(next_cache);
-
-        if let Some(remote) = remote.as_ref() {
-            apply_remote_preview(&preview_card_handle, &metadata_url, remote);
-        } else {
-            apply_preview_hydration_fallback(&preview_card_handle, &metadata_url);
-        }
-    });
 }
 
 #[derive(Properties, PartialEq)]
@@ -555,7 +381,6 @@ fn app() -> Html {
     let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
     let preview_card_ref = use_node_ref();
     let preview_size = use_state(|| (PREVIEW_INITIAL_WIDTH, PREVIEW_INITIAL_HEIGHT));
-    let preview_cache = use_state(HashMap::<String, PreviewCacheEntry>::new);
 
     {
         let current = *theme;
@@ -579,19 +404,13 @@ fn app() -> Html {
         let preview_card = preview_card.clone();
         let preview_anchor = preview_anchor.clone();
         let preview_size = preview_size.clone();
-        let preview_cache = preview_cache.clone();
         Callback::from(
             move |(asset, client_x, client_y): (PreviewAsset, i32, i32)| {
-                let metadata_url = asset.metadata_url.as_ref().map(|value| value.to_string());
                 let anchor = PreviewAnchor::Pointer { client_x, client_y };
                 preview_anchor.set(Some(anchor));
                 let (preview_width, preview_height) = *preview_size;
                 let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
                 preview_card.set(PreviewCardState::from_asset(asset, x, y));
-
-                if let Some(metadata_url) = metadata_url {
-                    hydrate_preview(&preview_card, &preview_cache, &metadata_url);
-                }
             },
         )
     };
@@ -600,18 +419,12 @@ fn app() -> Html {
         let preview_card = preview_card.clone();
         let preview_anchor = preview_anchor.clone();
         let preview_size = preview_size.clone();
-        let preview_cache = preview_cache.clone();
         Callback::from(move |asset: PreviewAsset| {
-            let metadata_url = asset.metadata_url.as_ref().map(|value| value.to_string());
             let anchor = PreviewAnchor::Focus;
             preview_anchor.set(Some(anchor));
             let (preview_width, preview_height) = *preview_size;
             let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
             preview_card.set(PreviewCardState::from_asset(asset, x, y));
-
-            if let Some(metadata_url) = metadata_url {
-                hydrate_preview(&preview_card, &preview_cache, &metadata_url);
-            }
         })
     };
 
@@ -733,6 +546,12 @@ fn app() -> Html {
                             <ExternalLink
                                 href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
                                 label="TechHub"
+                                preview={PreviewAsset {
+                                    src: AttrValue::from("/previews/manual/techhub.png"),
+                                    alt: AttrValue::from("TechHub website screenshot"),
+                                    title: AttrValue::from("TechHub"),
+                                    description: AttrValue::from("Texas A&M Technology Services TechHub page."),
+                                }}
                                 on_pointer_preview={on_pointer_preview.clone()}
                                 on_focus_preview={on_focus_preview.clone()}
                                 on_hide_preview={on_hide_preview.clone()}
@@ -756,7 +575,6 @@ fn app() -> Html {
                                             alt: AttrValue::from("Project SHADE sequence model dashboard preview"),
                                             title: AttrValue::from("Project SHADE"),
                                             description: AttrValue::from("LSTM component for Austin heat-wave forecasting."),
-                                            metadata_url: Some(AttrValue::from("https://github.com/NujhatJalil/SHADE-project")),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -773,7 +591,6 @@ fn app() -> Html {
                                             alt: AttrValue::from("FlightPath assisted trip planner interface preview"),
                                             title: AttrValue::from("FlightPath"),
                                             description: AttrValue::from("AI flight search experience from TAMUHack 2025."),
-                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505/tamuhack25_aa")),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -790,7 +607,6 @@ fn app() -> Html {
                                             alt: AttrValue::from("TechHub delivery operations console preview"),
                                             title: AttrValue::from("TechHub Delivery Platform"),
                                             description: AttrValue::from("Internal system handling 150+ monthly orders."),
-                                            metadata_url: Some(AttrValue::from("https://github.com/kyler505/techhub-dns")),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -818,6 +634,12 @@ fn app() -> Html {
                                     <ExternalLink
                                         href="https://www.linkedin.com/in/kylercao"
                                         label="LinkedIn"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/linkedin.png"),
+                                            alt: AttrValue::from("LinkedIn profile screenshot"),
+                                            title: AttrValue::from("LinkedIn"),
+                                            description: AttrValue::from("Kyler Cao professional profile."),
+                                        }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
                                         on_hide_preview={on_hide_preview.clone()}
