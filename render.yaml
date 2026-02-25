@@ -1,10 +1,6 @@
 services:
-  - type: web
+  - type: static
     name: portfolio
     env: static
-    plan: free
-    buildCommand: |
-      rustup target add wasm32-unknown-unknown
-      cargo install trunk --locked
-      trunk build --release
+    buildCommand: trunk build --release
     staticPublishPath: dist
