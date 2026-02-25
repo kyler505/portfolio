@@ -10,6 +10,8 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod frontend {
+    use std::{cell::RefCell, rc::Rc};
+
     use js_sys::{Array, ArrayBuffer, Date, Function, Object, Reflect, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
     use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
@@ -189,6 +191,21 @@ mod frontend {
         let (preview_width, preview_height) = **preview_size;
         let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
         preview_card.set(PreviewCardState::from_asset(pending.asset, x, y));
+    }
+
+    fn clear_pending_pointer_preview(
+        pending_pointer_preview: &Rc<RefCell<Option<PendingPointerPreview>>>,
+        pointer_raf_handle: &Rc<RefCell<Option<i32>>>,
+        pointer_raf_closure: &Rc<RefCell<Option<Closure<dyn FnMut()>>>>,
+    ) {
+        *pending_pointer_preview.borrow_mut() = None;
+
+        let scheduled_handle = pointer_raf_handle.borrow_mut().take();
+        if let (Some(win), Some(handle)) = (window(), scheduled_handle) {
+            let _ = win.cancel_animation_frame(handle);
+        }
+
+        *pointer_raf_closure.borrow_mut() = None;
     }
 
     fn formatted_college_station_time() -> String {
@@ -763,17 +780,16 @@ mod frontend {
         };
 
         {
+            let pending_pointer_preview = pending_pointer_preview.clone();
             let pointer_raf_handle = pointer_raf_handle.clone();
             let pointer_raf_closure = pointer_raf_closure.clone();
             use_effect_with((), move |_| {
                 move || {
-                    if let Some(win) = window() {
-                        if let Some(handle) = *pointer_raf_handle.borrow() {
-                            let _ = win.cancel_animation_frame(handle);
-                        }
-                    }
-                    *pointer_raf_handle.borrow_mut() = None;
-                    *pointer_raf_closure.borrow_mut() = None;
+                    clear_pending_pointer_preview(
+                        &pending_pointer_preview,
+                        &pointer_raf_handle,
+                        &pointer_raf_closure,
+                    );
                 }
             });
         }
@@ -794,7 +810,15 @@ mod frontend {
         let on_hide_preview = {
             let preview_card = preview_card.clone();
             let preview_anchor = preview_anchor.clone();
+            let pending_pointer_preview = pending_pointer_preview.clone();
+            let pointer_raf_handle = pointer_raf_handle.clone();
+            let pointer_raf_closure = pointer_raf_closure.clone();
             Callback::from(move |_| {
+                clear_pending_pointer_preview(
+                    &pending_pointer_preview,
+                    &pointer_raf_handle,
+                    &pointer_raf_closure,
+                );
                 preview_anchor.set(None);
                 let mut next = (*preview_card).clone();
                 next.visible = false;
