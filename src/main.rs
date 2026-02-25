@@ -551,8 +551,7 @@ mod frontend {
     #[function_component(App)]
     fn app() -> Html {
         let theme = use_state(resolve_theme);
-        let metric_index = use_state(|| 0usize);
-        let metrics = use_state(current_metrics);
+        let active_metric = use_state(|| current_metrics()[0].clone());
         let preview_card = use_state(PreviewCardState::hidden);
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
@@ -577,14 +576,13 @@ mod frontend {
         };
 
         {
-            let metric_index = metric_index.clone();
-            let metrics = metrics.clone();
+            let active_metric = active_metric.clone();
             use_effect_with((), move |_| {
                 let mut interval_id = None;
                 let mut callback = None;
 
                 if let Some(win) = window() {
-                    let cursor = Rc::new(Cell::new(*metric_index));
+                    let cursor = Rc::new(Cell::new(0usize));
                     let next_cursor = cursor.clone();
                     let tick = Closure::<dyn FnMut()>::new(move || {
                         let next_metrics = current_metrics();
@@ -595,8 +593,7 @@ mod frontend {
 
                         let next_index = (next_cursor.get() + 1) % len;
                         next_cursor.set(next_index);
-                        metrics.set(next_metrics);
-                        metric_index.set(next_index);
+                        active_metric.set(next_metrics[next_index].clone());
                     });
 
                     interval_id = win
@@ -733,8 +730,6 @@ mod frontend {
             "--preview-x: {:.2}px; --preview-y: {:.2}px;",
             preview_card.x, preview_card.y
         );
-
-        let active_metric = metrics[*metric_index].clone();
 
         html! {
             <>
@@ -880,7 +875,7 @@ mod frontend {
 
                         <section aria-labelledby="now-heading" class="section-block now-metric">
                             <h2 id="now-heading">{"Metric"}</h2>
-                            <p class="metric-value">{active_metric.value}</p>
+                            <p class="metric-value">{active_metric.value.clone()}</p>
                             <p class="metric-label">{active_metric.label}</p>
                         </section>
                     </main>
