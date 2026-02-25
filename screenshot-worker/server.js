@@ -51,7 +51,7 @@ function jsonResponse(res, statusCode, payload) {
 }
 
 function handleHealthCheck(req, res, pathname) {
-  if (pathname !== "/health" && pathname !== "/uptime") {
+  if (pathname !== "/" && pathname !== "/health" && pathname !== "/uptime") {
     return false;
   }
 
