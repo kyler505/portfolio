@@ -5,13 +5,20 @@ edition = "2021"
 
 [dependencies]
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = "0.3"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
+  "Headers",
   "Document",
   "Element",
   "HtmlElement",
   "MediaQueryList",
+  "Request",
+  "RequestInit",
+  "RequestMode",
+  "Response",
   "Storage",
   "Window",
 ] }

@@ -12,9 +12,11 @@ fn main() {
 mod frontend {
     use std::{cell::RefCell, rc::Rc};
 
+    use gloo_timers::callback::Timeout;
     use js_sys::{Array, ArrayBuffer, Date, Function, Object, Reflect, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
-    use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
+    use wasm_bindgen_futures::{spawn_local, JsFuture};
+    use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Request, RequestInit, RequestMode, Response, Storage};
     use yew::prelude::*;
 
     const THEME_KEY: &str = "portfolio-theme";
@@ -30,6 +32,10 @@ mod frontend {
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
     const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
+    const GITHUB_REPO_OWNER: &str = "kyler505";
+    const GITHUB_REPO_NAME: &str = "portfolio";
+    const GITHUB_COMMITS_PER_PAGE: u32 = 100;
+    const GITHUB_MAX_PAGES: u32 = 60;
     const ENERGY_START_YEAR: i32 = 2026;
     const ENERGY_START_MONTH: u32 = 1;
     const ENERGY_START_DAY: u32 = 12;
@@ -155,12 +161,8 @@ mod frontend {
         }
     }
 
-    fn trigger_theme_animation() {
-        let Some(win) = window() else {
-            return;
-        };
-
-        let Some(document) = win.document() else {
+    fn trigger_theme_animation(timeout_handle: &Rc<RefCell<Option<Timeout>>>) {
+        let Some(document) = window().and_then(|win| win.document()) else {
             return;
         };
 
@@ -170,15 +172,94 @@ mod frontend {
 
         let _ = root.set_attribute("data-theme-switching", "true");
         let root_for_timeout = root.clone();
-        let clear_animation = Closure::<dyn FnMut()>::once(move || {
+        let clear_animation = Timeout::new(340, move || {
             let _ = root_for_timeout.remove_attribute("data-theme-switching");
         });
+        *timeout_handle.borrow_mut() = Some(clear_animation);
+    }
 
-        let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-            clear_animation.as_ref().unchecked_ref(),
-            340,
-        );
-        clear_animation.forget();
+    fn github_month_range_iso() -> (String, String) {
+        let now = Date::new_0();
+        let year = now.get_utc_full_year() as i32;
+        let month = now.get_utc_month() as i32 + 1;
+        let (next_year, next_month) = if month == 12 {
+            (year + 1, 1)
+        } else {
+            (year, month + 1)
+        };
+
+        (
+            format!("{year:04}-{month:02}-01T00:00:00Z"),
+            format!("{next_year:04}-{next_month:02}-01T00:00:00Z"),
+        )
+    }
+
+    fn parse_next_link(link_header: &str) -> Option<String> {
+        for segment in link_header.split(',') {
+            let trimmed = segment.trim();
+            if !trimmed.contains("rel=\"next\"") {
+                continue;
+            }
+
+            let start = trimmed.find('<')? + 1;
+            let end = trimmed[start..].find('>')? + start;
+            return Some(trimmed[start..end].to_owned());
+        }
+
+        None
+    }
+
+    async fn fetch_commit_page_count(url: &str) -> Result<(u32, Option<String>), ()> {
+        let Some(win) = window() else {
+            return Err(());
+        };
+
+        let init = RequestInit::new();
+        init.set_method("GET");
+        init.set_mode(RequestMode::Cors);
+        let request = Request::new_with_str_and_init(url, &init).map_err(|_| ())?;
+        let response_value = JsFuture::from(win.fetch_with_request(&request))
+            .await
+            .map_err(|_| ())?;
+        let response = response_value.dyn_into::<Response>().map_err(|_| ())?;
+        if !response.ok() {
+            return Err(());
+        }
+
+        let next_page = response
+            .headers()
+            .get("link")
+            .ok()
+            .flatten()
+            .and_then(|header| parse_next_link(&header));
+
+        let json_promise = response.json().map_err(|_| ())?;
+        let json = JsFuture::from(json_promise).await.map_err(|_| ())?;
+        let rows = json.dyn_into::<Array>().map_err(|_| ())?;
+
+        Ok((rows.length(), next_page))
+    }
+
+    async fn fetch_commits_this_month(owner: &str, repo: &str) -> Result<u32, ()> {
+        let (since, until) = github_month_range_iso();
+        let mut next_url = Some(format!(
+            "https://api.github.com/repos/{owner}/{repo}/commits?since={since}&until={until}&per_page={GITHUB_COMMITS_PER_PAGE}"
+        ));
+        let mut total: u32 = 0;
+        let mut page_count: u32 = 0;
+
+        while let Some(url) = next_url.take() {
+            page_count += 1;
+            if page_count > GITHUB_MAX_PAGES {
+                return Err(());
+            }
+
+            let (count, next) = fetch_commit_page_count(&url).await?;
+            total = total.checked_add(count).ok_or(())?;
+            next_url = next;
+        }
+
+        Ok(total)
     }
 
     fn js_string(value: &str) -> wasm_bindgen::JsValue {
@@ -426,7 +507,7 @@ mod frontend {
         format_wasm_heap_size(buffer.byte_length() as u64)
     }
 
-    fn current_metrics() -> [Metric; 4] {
+    fn current_metrics(commits_this_month: &AttrValue) -> [Metric; 4] {
         [
             Metric {
                 value: AttrValue::from(wasm_heap_size_value()),
@@ -441,7 +522,7 @@ mod frontend {
                 label: "energy drinks consumed",
             },
             Metric {
-                value: AttrValue::from(COMMITS_THIS_MONTH_FALLBACK),
+                value: commits_this_month.clone(),
                 label: "commits this month",
             },
         ]
@@ -602,6 +683,8 @@ mod frontend {
         label: AttrValue,
         #[prop_or_default]
         preview: Option<PreviewAsset>,
+        #[prop_or_default]
+        extra_class: Classes,
         on_pointer_preview: Callback<(PreviewAsset, i32, i32)>,
         on_focus_preview: Callback<PreviewAsset>,
         on_hide_preview: Callback<()>,
@@ -653,7 +736,7 @@ mod frontend {
 
         html! {
             <a
-                class="link"
+                class={classes!("link", props.extra_class.clone())}
                 href={props.href.clone()}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -673,8 +756,12 @@ mod frontend {
     fn app() -> Html {
         let theme = use_state(resolve_theme);
         let theme_icon_cycle = use_state(|| 0u32);
-        let active_metric = use_state(|| current_metrics()[0].clone());
+        let commits_this_month = use_state(|| AttrValue::from(COMMITS_THIS_MONTH_FALLBACK));
+        let active_metric = use_state(|| {
+            current_metrics(&AttrValue::from(COMMITS_THIS_MONTH_FALLBACK))[0].clone()
+        });
         let metric_cursor = use_mut_ref(|| 0usize);
+        let theme_animation_timeout = use_mut_ref(|| Option::<Timeout>::None);
         let preview_card = use_state(PreviewCardState::hidden);
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
@@ -694,26 +781,62 @@ mod frontend {
         let on_toggle = {
             let theme = theme.clone();
             let theme_icon_cycle = theme_icon_cycle.clone();
+            let theme_animation_timeout = theme_animation_timeout.clone();
             Callback::from(move |_| {
                 let next = (*theme).toggled();
                 persist_theme(next);
                 apply_theme(next);
-                trigger_theme_animation();
+                trigger_theme_animation(&theme_animation_timeout);
                 theme.set(next);
                 theme_icon_cycle.set((*theme_icon_cycle).wrapping_add(1));
             })
         };
 
         {
+            let commits_this_month = commits_this_month.clone();
+            use_effect_with((), move |_| {
+                spawn_local(async move {
+                    let value = fetch_commits_this_month(GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
+                        .await
+                        .map(|count| count.to_string())
+                        .unwrap_or_else(|_| COMMITS_THIS_MONTH_FALLBACK.to_owned());
+                    commits_this_month.set(AttrValue::from(value));
+                });
+
+                || ()
+            });
+        }
+
+        {
             let active_metric = active_metric.clone();
             let metric_cursor = metric_cursor.clone();
+            let commits_this_month = commits_this_month.clone();
+            use_effect_with((*commits_this_month).clone(), move |latest_commits| {
+                let metrics = current_metrics(latest_commits);
+                let current_index = {
+                    let cursor = metric_cursor.borrow();
+                    *cursor % metrics.len()
+                };
+
+                if current_index == 3 {
+                    active_metric.set(metrics[3].clone());
+                }
+
+                || ()
+            });
+        }
+
+        {
+            let active_metric = active_metric.clone();
+            let metric_cursor = metric_cursor.clone();
+            let commits_this_month = commits_this_month.clone();
             use_effect_with((), move |_| {
                 let mut interval_id = None;
                 let mut callback = None;
 
                 if let Some(win) = window() {
                     let tick = Closure::<dyn FnMut()>::new(move || {
-                        let metrics = current_metrics();
+                        let metrics = current_metrics(&commits_this_month);
                         let len = metrics.len();
                         if len == 0 {
                             return;
@@ -975,6 +1098,7 @@ mod frontend {
                                 <ExternalLink
                                     href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
                                     label="TechHub"
+                                    extra_class={classes!("brand-link")}
                                     preview={PreviewAsset {
                                         src: AttrValue::from("/previews/manual/techhub.png"),
                                         alt: AttrValue::from("TechHub website screenshot"),

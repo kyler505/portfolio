@@ -652,8 +652,10 @@ dependencies = [
 name = "portfolio"
 version = "0.1.0"
 dependencies = [
+ "gloo-timers 0.3.0",
  "js-sys",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "yew",
 ]
