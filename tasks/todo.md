@@ -165,3 +165,23 @@
 - Backend and worker correlate logs via `x-request-id`; backend forwards request id to worker.
 - Logging defaults avoid sensitive URL query output, with env-tunable URL log mode.
 - Worker logs capture lifecycle, validation reasons, route abort reasons, and Playwright stage events without token leakage.
+
+## 2026-02-25 production screenshot fallback manual debug + fix
+- [x] Restate goal + acceptance criteria
+- [x] Reproduce failing `/api/preview` request against production and capture `x-request-id`
+- [x] Correlate backend + worker Render logs and isolate exact failing stage
+- [x] Apply minimal safe code/config fix for root cause
+- [x] Run verification (`cargo check`, `cargo test backend::tests`, `trunk build --release`, `node --check screenshot-worker/server.js`)
+- [x] Validate runtime success path for previously failing URL and confirm structured logs
+- [ ] Commit and push to `origin/main`
+
+### Acceptance Criteria
+- Identify the precise production failure stage with request-id-correlated evidence.
+- Apply the smallest change that restores screenshot fallback while preserving SSRF and token protections.
+- Produce successful `/api/preview` response with screenshot fallback for a URL lacking OG image.
+- Verification commands pass locally and logs clearly show fallback success path.
+
+### Results
+- Reproduced failures with request IDs showing backend `screenshot_worker_failed` (`worker_failure_reason":"upstream"`) and no worker `/capture` logs while `SCREENSHOT_WORKER_URL` used private host.
+- Updated Render config/docs to use public service endpoints and set `PLAYWRIGHT_BROWSERS_PATH=0` so Chromium is packaged in the worker deploy artifact.
+- Verified production success using `req-1771990512967-7`: worker logs show `capture_goto_start`, `capture_goto_ok`, `capture_screenshot_ok`, and backend logs show `preview_screenshot_fallback` with `worker_succeeded:true`.

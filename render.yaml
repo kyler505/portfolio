@@ -14,7 +14,7 @@ services:
       - key: RUST_LOG
         value: info
       - key: SCREENSHOT_WORKER_URL
-        value: http://screenshot-worker:10000
+        value: https://screenshot-worker-x78t.onrender.com
       - key: SCREENSHOT_WORKER_TIMEOUT_MS
         value: "8000"
       - key: SCREENSHOT_WORKER_TOKEN
@@ -58,6 +58,8 @@ services:
     startCommand: node screenshot-worker/server.js
     healthCheckPath: /health
     envVars:
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
       - key: CAPTURE_TIMEOUT_MS
         value: "8000"
       - key: SCREENSHOT_WORKER_TOKEN
@@ -74,6 +76,6 @@ services:
     startCommand: node scripts/refresh-screenshots.mjs
     envVars:
       - key: SCREENSHOT_REFRESH_ENDPOINT
-        value: http://portfolio:10000/internal/refresh-screenshots
+        value: https://portfolio-25qu.onrender.com/internal/refresh-screenshots
       - key: SCREENSHOT_REFRESH_TOKEN
         sync: false

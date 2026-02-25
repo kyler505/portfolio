@@ -149,7 +149,7 @@ This repo includes `render.yaml` for a two-service deployment.
 Environment variables:
 - `PORT` is provided by Render and used by `src/backend.rs`.
 - `RUST_LOG` is included for runtime log level control.
-- `SCREENSHOT_WORKER_URL` points backend fallback calls to `http://screenshot-worker:10000` in Render.
+- `SCREENSHOT_WORKER_URL` should point to the worker public URL (for this deployment: `https://screenshot-worker-x78t.onrender.com`) so fallback works on Render free plans without private DNS.
 - `SCREENSHOT_WORKER_TIMEOUT_MS` controls screenshot worker request timeout.
 - `SCREENSHOT_WORKER_TOKEN` is required in the blueprint for both services (configured with `sync: false` placeholders); backend sends `Authorization: Bearer <token>` and the worker rejects missing/invalid tokens.
 - `SCREENSHOT_TTL_SECONDS` sets screenshot freshness TTL (default `604800`, 7 days).
@@ -159,6 +159,7 @@ Environment variables:
 - `SCREENSHOT_URLS_CONFIG_PATH` sets the URL list config path (default `config/preview-urls.json`).
 - `SCREENSHOT_REFRESH_CONCURRENCY` bounds refresh fan-out (default `3`, allowed `2-4`).
 - `DNS_LOOKUP_TIMEOUT_MS` controls worker DNS resolution timeout for SSRF host validation.
+- `PLAYWRIGHT_BROWSERS_PATH=0` keeps Chromium inside the app directory so Render runtime can find the browser binary after deploy.
 - `PREVIEW_*` values are included as deploy-time placeholders for preview API tuning defaults.
   - Current runtime defaults are defined in `src/backend.rs` constants.
 
@@ -172,7 +173,7 @@ Maintaining refresh URLs:
 Render cron notes:
 - `render.yaml` includes `preview-screenshot-refresh` cron scheduled daily (`0 3 * * *`).
 - cron runs `node scripts/refresh-screenshots.mjs`, which calls backend `POST /internal/refresh-screenshots` with bearer token.
-- `SCREENSHOT_REFRESH_ENDPOINT` defaults to `http://portfolio:10000/internal/refresh-screenshots`; update it if your Render network topology differs.
+- `SCREENSHOT_REFRESH_ENDPOINT` defaults to `https://portfolio-25qu.onrender.com/internal/refresh-screenshots`; update it if your service URL changes.
 
 Deploy flow:
 1. Push repo to GitHub.
