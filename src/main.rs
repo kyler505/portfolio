@@ -10,8 +10,7 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod frontend {
-    use js_sys::{Function, Reflect};
-    use wasm_bindgen::{closure::Closure, JsCast, JsValue};
+    use wasm_bindgen::{closure::Closure, JsCast};
     use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
     use yew::prelude::*;
 
@@ -26,6 +25,22 @@ mod frontend {
     const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
+    const METRIC_ROTATION_MS: i32 = 3200;
+
+    const METRICS: [Metric; 3] = [
+        Metric {
+            value: "2027",
+            label: "expected graduation year",
+        },
+        Metric {
+            value: "150+",
+            label: "monthly orders supported at TechHub",
+        },
+        Metric {
+            value: "3",
+            label: "production-facing projects shipped recently",
+        },
+    ];
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -37,6 +52,12 @@ mod frontend {
     enum Theme {
         Light,
         Dark,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct Metric {
+        value: &'static str,
+        label: &'static str,
     }
 
     impl Theme {
@@ -110,37 +131,6 @@ mod frontend {
             if let Some(root) = document.document_element() {
                 let _ = root.set_attribute("data-theme", theme.as_str());
             }
-        }
-    }
-
-    fn apply_theme_with_transition(theme: Theme) {
-        let Some(document) = window().and_then(|w| w.document()) else {
-            apply_theme(theme);
-            return;
-        };
-
-        let document_js: JsValue = document.into();
-        let Ok(start_view_transition) =
-            Reflect::get(&document_js, &JsValue::from_str("startViewTransition"))
-        else {
-            apply_theme(theme);
-            return;
-        };
-
-        let Some(start_view_transition) = start_view_transition.dyn_ref::<Function>() else {
-            apply_theme(theme);
-            return;
-        };
-
-        let callback = Closure::<dyn FnMut()>::new(move || {
-            apply_theme(theme);
-        });
-
-        if start_view_transition
-            .call1(&document_js, callback.as_ref().unchecked_ref())
-            .is_err()
-        {
-            apply_theme(theme);
         }
     }
 
@@ -368,6 +358,7 @@ mod frontend {
     #[function_component(App)]
     fn app() -> Html {
         let theme = use_state(resolve_theme);
+        let metric_index = use_state(|| 0usize);
         let preview_card = use_state(PreviewCardState::hidden);
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
@@ -386,10 +377,41 @@ mod frontend {
             Callback::from(move |_| {
                 let next = (*theme).toggled();
                 persist_theme(next);
-                apply_theme_with_transition(next);
+                apply_theme(next);
                 theme.set(next);
             })
         };
+
+        {
+            let metric_index = metric_index.clone();
+            use_effect_with((), move |_| {
+                let mut interval_id = None;
+                let mut callback = None;
+
+                if let Some(win) = window() {
+                    let mut cursor = *metric_index;
+                    let tick = Closure::<dyn FnMut()>::new(move || {
+                        cursor = (cursor + 1) % METRICS.len();
+                        metric_index.set(cursor);
+                    });
+
+                    interval_id = win
+                        .set_interval_with_callback_and_timeout_and_arguments_0(
+                            tick.as_ref().unchecked_ref(),
+                            METRIC_ROTATION_MS,
+                        )
+                        .ok();
+                    callback = Some(tick);
+                }
+
+                move || {
+                    if let (Some(win), Some(handle)) = (window(), interval_id) {
+                        win.clear_interval_with_handle(handle);
+                    }
+                    drop(callback);
+                }
+            });
+        }
 
         let on_pointer_preview = {
             let preview_card = preview_card.clone();
@@ -507,6 +529,8 @@ mod frontend {
             "--preview-x: {:.2}px; --preview-y: {:.2}px;",
             preview_card.x, preview_card.y
         );
+
+        let active_metric = METRICS[*metric_index];
 
         html! {
             <>
@@ -652,8 +676,8 @@ mod frontend {
 
                         <section aria-labelledby="now-heading" class="section-block now-metric">
                             <h2 id="now-heading">{"Metric"}</h2>
-                            <p class="metric-value">{"2027"}</p>
-                            <p class="metric-label">{"expected graduation year"}</p>
+                            <p class="metric-value">{active_metric.value}</p>
+                            <p class="metric-label">{active_metric.label}</p>
                         </section>
                     </main>
                 </div>
