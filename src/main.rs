@@ -25,7 +25,6 @@ mod frontend {
     const PREVIEW_INITIAL_HEIGHT: f64 = 260.0;
     const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
-    const PREVIEW_FALLBACK_TITLE: &str = "Preview unavailable";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
 
     #[derive(Clone, Copy, PartialEq)]
@@ -247,8 +246,6 @@ mod frontend {
     struct PreviewAsset {
         src: AttrValue,
         alt: AttrValue,
-        title: AttrValue,
-        description: AttrValue,
     }
 
     #[derive(Clone, PartialEq)]
@@ -256,8 +253,6 @@ mod frontend {
         visible: bool,
         src: AttrValue,
         alt: AttrValue,
-        title: AttrValue,
-        description: AttrValue,
         x: f64,
         y: f64,
     }
@@ -268,8 +263,6 @@ mod frontend {
                 visible: false,
                 src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
                 alt: AttrValue::from(PREVIEW_DEFAULT_ALT),
-                title: AttrValue::from(PREVIEW_FALLBACK_TITLE),
-                description: AttrValue::from("Hover over a project link to view details."),
                 x: PREVIEW_GUTTER,
                 y: PREVIEW_GUTTER,
             }
@@ -280,8 +273,6 @@ mod frontend {
                 visible: true,
                 src: asset.src,
                 alt: asset.alt,
-                title: asset.title,
-                description: asset.description,
                 x,
                 y,
             }
@@ -314,8 +305,6 @@ mod frontend {
         Some(PreviewAsset {
             src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
             alt: AttrValue::from(format!("{} preview placeholder", label)),
-            title: label.clone(),
-            description: AttrValue::from("External link preview"),
         })
     }
 
@@ -494,12 +483,7 @@ mod frontend {
             let reclamp_preview = reclamp_preview.clone();
             let preview_card = preview_card.clone();
             use_effect_with(
-                (
-                    (*preview_card).visible,
-                    (*preview_card).src.clone(),
-                    (*preview_card).title.clone(),
-                    (*preview_card).description.clone(),
-                ),
+                ((*preview_card).visible, (*preview_card).src.clone()),
                 move |_| {
                     reclamp_preview.emit(());
                     || ()
@@ -568,8 +552,6 @@ mod frontend {
                                     preview={PreviewAsset {
                                         src: AttrValue::from("/previews/manual/techhub.png"),
                                         alt: AttrValue::from("TechHub website screenshot"),
-                                        title: AttrValue::from("TechHub"),
-                                        description: AttrValue::from("Texas A&M Technology Services TechHub page."),
                                     }}
                                     on_pointer_preview={on_pointer_preview.clone()}
                                     on_focus_preview={on_focus_preview.clone()}
@@ -592,8 +574,6 @@ mod frontend {
                                             preview={PreviewAsset {
                                                 src: AttrValue::from("/previews/og/project-shade-og.png"),
                                                 alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
-                                                title: AttrValue::from("GitHub - NujhatJalil/SHADE-project: The Systematic Heat Assessment and Data Evaluation Project @ Aggie Data Science Club (Fall 2025)"),
-                                                description: AttrValue::from("The Systematic Heat Assessment and Data Evaluation Project @ Aggie Data Science Club (Fall 2025) - NujhatJalil/SHADE-project"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -608,8 +588,6 @@ mod frontend {
                                             preview={PreviewAsset {
                                                 src: AttrValue::from("/previews/og/flightpath-og.png"),
                                                 alt: AttrValue::from("GitHub Open Graph image for FlightPath repository"),
-                                                title: AttrValue::from("GitHub - kyler505/tamuhack25_aa: TAMUHACK 2025 Challenge - Kyler Cao, Brady Nguyen, Erix Huynh, Kevin Nguyen"),
-                                                description: AttrValue::from("TAMUHACK 2025 Challenge - Kyler Cao, Brady Nguyen, Erix Huynh, Kevin Nguyen - kyler505/tamuhack25_aa"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -624,8 +602,6 @@ mod frontend {
                                             preview={PreviewAsset {
                                                 src: AttrValue::from("/previews/og/techhub-delivery-platform-og.png"),
                                                 alt: AttrValue::from("GitHub Open Graph image for TechHub Delivery Platform repository"),
-                                                title: AttrValue::from("GitHub - kyler505/techhub-dns: TechHub Delivery Notification Service Test App"),
-                                                description: AttrValue::from("TechHub Delivery Notification Service Test App. Contribute to kyler505/techhub-dns development by creating an account on GitHub."),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -646,8 +622,6 @@ mod frontend {
                                             preview={PreviewAsset {
                                                 src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
                                                 alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
-                                                title: AttrValue::from("GitHub"),
-                                                description: AttrValue::from("Kyler505 profile and repositories."),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
@@ -662,8 +636,6 @@ mod frontend {
                                             preview={PreviewAsset {
                                                 src: AttrValue::from("/previews/manual/linkedin.png"),
                                                 alt: AttrValue::from("LinkedIn profile screenshot"),
-                                                title: AttrValue::from("LinkedIn"),
-                                                description: AttrValue::from("Kyler Cao professional profile."),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
