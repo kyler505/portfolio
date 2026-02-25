@@ -185,3 +185,24 @@
 - Reproduced failures with request IDs showing backend `screenshot_worker_failed` (`worker_failure_reason":"upstream"`) and no worker `/capture` logs while `SCREENSHOT_WORKER_URL` used private host.
 - Updated Render config/docs to use public service endpoints and set `PLAYWRIGHT_BROWSERS_PATH=0` so Chromium is packaged in the worker deploy artifact.
 - Verified production success using `req-1771990512967-7`: worker logs show `capture_goto_start`, `capture_goto_ok`, `capture_screenshot_ok`, and backend logs show `preview_screenshot_fallback` with `worker_succeeded:true`.
+
+## 2026-02-25 metadata-fetch graceful degradation for `/api/preview`
+- [x] Restate goal + acceptance criteria
+- [x] Read backend preview pipeline and error logging path
+- [x] Implement recoverable metadata-fetch fallback into screenshot decision pipeline
+- [x] Add/adjust tests for recoverable metadata-fetch behavior
+- [x] Run verification (`cargo check`, `cargo test backend::tests`, `trunk build --release`)
+- [x] Validate runtime behavior for blocked upstream URL example
+- [ ] Commit and push to `origin/main`
+
+### Acceptance Criteria
+- Metadata fetch failures (network, non-2xx, parse/read) no longer hard-fail `/api/preview`.
+- Backend emits recoverable metadata failure logging instead of terminal `preview_request_failed` for these cases.
+- `/api/preview` still returns `200` with `ok:true` when screenshot fallback succeeds.
+- If screenshot fallback fails too, response still degrades to minimal metadata with no image while remaining `ok:true`.
+
+### Results
+- `/api/preview` metadata fetch failures now degrade to URL-derived minimal metadata and still flow through screenshot fallback.
+- Added recoverable log event `preview_metadata_fetch_failed_recoverable` (`error_class:"metadata_fetch_failed_recoverable"`) instead of terminal `preview_request_failed` for upstream metadata failures.
+- Added targeted backend tests validating that metadata failures still execute fallback and keep `ok:true` even when screenshot fallback cannot produce an image.
+- Verified runtime with `https://example.invalid` returning `200`/`ok:true` minimal payload and structured logs showing recoverable metadata failure + screenshot fallback branch.

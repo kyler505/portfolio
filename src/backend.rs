@@ -307,6 +307,7 @@ struct PreviewFetchOutcome {
     payload: PreviewPayload,
     og_metadata_found_image: bool,
     screenshot_fallback: Option<ScreenshotFallbackOutcome>,
+    metadata_fetch_error: Option<&'static str>,
 }
 
 struct ScreenshotRefreshOutcome {
@@ -477,30 +478,22 @@ async fn get_preview(
         );
     }
 
-    let fetched = match fetch_preview_payload(parsed_url, &state, &request_id).await {
-        Ok(payload) => payload,
-        Err(error_message) => {
-            let error_class = classify_preview_fetch_error(error_message);
-            log_event(
-                &state.config,
-                LogLevel::Info,
-                "preview_request_failed",
-                serde_json::json!({
-                    "request_id": request_id.as_str(),
-                    "url": logged_url.as_str(),
-                    "error_class": error_class,
-                    "message": error_message,
-                    "duration_ms": request_started_at.elapsed().as_millis(),
-                }),
-            );
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                PreviewPayload::error(error_message),
-                cache_control("no-store"),
-                &request_id,
-            )
-        }
-    };
+    let fetched = fetch_preview_payload(parsed_url, &state, &request_id).await;
+
+    if let Some(error_message) = fetched.metadata_fetch_error {
+        log_event(
+            &state.config,
+            LogLevel::Info,
+            "preview_metadata_fetch_failed_recoverable",
+            serde_json::json!({
+                "request_id": request_id.as_str(),
+                "url": logged_url.as_str(),
+                "error_class": "metadata_fetch_failed_recoverable",
+                "message": error_message,
+                "duration_ms": request_started_at.elapsed().as_millis(),
+            }),
+        );
+    }
 
     log_event(
         &state.config,
@@ -1275,14 +1268,6 @@ async fn parse_preview_url(raw_url: &str) -> Result<Url, &'static str> {
     Ok(parsed)
 }
 
-fn classify_preview_fetch_error(error_message: &str) -> &'static str {
-    if error_message == "screenshot_worker_failed" || error_message == "screenshot_worker_unconfigured" {
-        return "screenshot_worker_failed";
-    }
-
-    "upstream_fetch_failed"
-}
-
 fn ensure_url_shape_is_allowed(url: &Url) -> Result<(), &'static str> {
     if !(url.scheme() == "http" || url.scheme() == "https") {
         return Err("URL scheme must be http or https");
@@ -1354,29 +1339,61 @@ async fn fetch_preview_payload(
     target_url: Url,
     state: &AppState,
     request_id: &str,
-) -> Result<PreviewFetchOutcome, &'static str> {
-    let fetched = fetch_preview_metadata(target_url, &state.config).await?;
-    let screenshot_fallback = if fetched.metadata.image.is_none() {
-        Some(resolve_screenshot_image_for_preview(state, &fetched.resolved_url, request_id).await)
+) -> PreviewFetchOutcome {
+    let fetched = fetch_preview_metadata(target_url.clone(), &state.config).await;
+    build_preview_payload_from_metadata_result(fetched, target_url, state, request_id).await
+}
+
+async fn build_preview_payload_from_metadata_result(
+    fetched: Result<FetchedPreviewMetadata, &'static str>,
+    target_url: Url,
+    state: &AppState,
+    request_id: &str,
+) -> PreviewFetchOutcome {
+    let (resolved_url, metadata, metadata_fetch_error) = match fetched {
+        Ok(success) => (success.resolved_url, success.metadata, None),
+        Err(error) => (
+            target_url.clone(),
+            minimal_metadata_from_url(&target_url),
+            Some(error),
+        ),
+    };
+
+    let screenshot_fallback = if metadata.image.is_none() {
+        Some(resolve_screenshot_image_for_preview(state, &resolved_url, request_id).await)
     } else {
         None
     };
 
-    let og_metadata_found_image = fetched.metadata.image.is_some();
+    let og_metadata_found_image = metadata.image.is_some();
     let screenshot_image = screenshot_fallback.as_ref().and_then(|value| value.image.clone());
 
-    Ok(PreviewFetchOutcome {
+    PreviewFetchOutcome {
         payload: PreviewPayload {
             ok: true,
-            url: Some(fetched.resolved_url.to_string()),
-            title: fetched.metadata.title,
-            description: fetched.metadata.description,
-            image: fetched.metadata.image.or(screenshot_image),
+            url: Some(resolved_url.to_string()),
+            title: metadata.title,
+            description: metadata.description,
+            image: metadata.image.or(screenshot_image),
             error: None,
         },
         og_metadata_found_image,
         screenshot_fallback,
-    })
+        metadata_fetch_error,
+    }
+}
+
+fn minimal_metadata_from_url(url: &Url) -> ExtractedMetadata {
+    let host_title = url
+        .host_str()
+        .map(|host| host.strip_prefix("www.").unwrap_or(host).to_string())
+        .unwrap_or_else(|| url.to_string());
+
+    ExtractedMetadata {
+        title: Some(host_title),
+        description: None,
+        image: None,
+    }
 }
 
 async fn fetch_preview_metadata(
@@ -1647,6 +1664,55 @@ fn collect_validated_resolved_ips(
 mod tests {
     use super::*;
 
+    fn test_runtime_config() -> PreviewRuntimeConfig {
+        PreviewRuntimeConfig {
+            cache_ttl_seconds: DEFAULT_PREVIEW_CACHE_TTL_SECONDS,
+            cache_max_entries: DEFAULT_PREVIEW_CACHE_MAX_ENTRIES,
+            response_max_bytes: DEFAULT_PREVIEW_RESPONSE_MAX_BYTES,
+            request_timeout: Duration::from_millis(DEFAULT_PREVIEW_REQUEST_TIMEOUT_MS),
+            connect_timeout: Duration::from_millis(DEFAULT_PREVIEW_CONNECT_TIMEOUT_MS),
+            dns_lookup_timeout: Duration::from_millis(DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS),
+            max_redirects: DEFAULT_PREVIEW_MAX_REDIRECTS,
+            max_resolved_ip_attempts: DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS,
+            screenshot_worker_url: None,
+            screenshot_worker_timeout: Duration::from_millis(DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS),
+            screenshot_worker_token: None,
+            screenshot_ttl_seconds: DEFAULT_SCREENSHOT_TTL_SECONDS,
+            screenshot_stale_grace_seconds: DEFAULT_SCREENSHOT_STALE_GRACE_SECONDS,
+            screenshot_cache_index_path: PathBuf::from("/tmp/test-preview-cache.json"),
+            screenshot_refresh_token: Some("token".to_string()),
+            screenshot_refresh_concurrency: DEFAULT_SCREENSHOT_REFRESH_CONCURRENCY,
+            screenshot_refresh_urls_path: PathBuf::from("config/preview-urls.json"),
+            log_level: DEFAULT_LOG_LEVEL,
+            log_preview_url_mode: DEFAULT_LOG_PREVIEW_URL_MODE,
+        }
+    }
+
+    fn test_state_with_screenshot_entry(target_url: &Url, image: &str) -> AppState {
+        let now = now_unix_seconds();
+        let mut screenshot_entries = HashMap::new();
+        screenshot_entries.insert(
+            target_url.to_string(),
+            ScreenshotCacheEntry {
+                image: image.to_string(),
+                captured_at: now,
+                expires_at: now.saturating_add(600),
+                source: "test".to_string(),
+                last_error: None,
+            },
+        );
+
+        AppState {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            screenshot_cache: Arc::new(RwLock::new(ScreenshotCacheStore {
+                file_path: PathBuf::from("/tmp/test-preview-cache.json"),
+                entries: screenshot_entries,
+            })),
+            screenshot_refresh_in_flight: Arc::new(RwLock::new(HashSet::new())),
+            config: test_runtime_config(),
+        }
+    }
+
     #[tokio::test]
     async fn redirect_target_resolves_relative_location() {
         let current = Url::parse("http://93.184.216.34/start").expect("valid URL");
@@ -1682,29 +1748,7 @@ mod tests {
                 entries: HashMap::new(),
             })),
             screenshot_refresh_in_flight: Arc::new(RwLock::new(HashSet::new())),
-            config: PreviewRuntimeConfig {
-                cache_ttl_seconds: DEFAULT_PREVIEW_CACHE_TTL_SECONDS,
-                cache_max_entries: DEFAULT_PREVIEW_CACHE_MAX_ENTRIES,
-                response_max_bytes: DEFAULT_PREVIEW_RESPONSE_MAX_BYTES,
-                request_timeout: Duration::from_millis(DEFAULT_PREVIEW_REQUEST_TIMEOUT_MS),
-                connect_timeout: Duration::from_millis(DEFAULT_PREVIEW_CONNECT_TIMEOUT_MS),
-                dns_lookup_timeout: Duration::from_millis(DEFAULT_PREVIEW_DNS_LOOKUP_TIMEOUT_MS),
-                max_redirects: DEFAULT_PREVIEW_MAX_REDIRECTS,
-                max_resolved_ip_attempts: DEFAULT_PREVIEW_MAX_RESOLVED_IP_ATTEMPTS,
-                screenshot_worker_url: None,
-                screenshot_worker_timeout: Duration::from_millis(
-                    DEFAULT_SCREENSHOT_WORKER_TIMEOUT_MS,
-                ),
-                screenshot_worker_token: None,
-                screenshot_ttl_seconds: DEFAULT_SCREENSHOT_TTL_SECONDS,
-                screenshot_stale_grace_seconds: DEFAULT_SCREENSHOT_STALE_GRACE_SECONDS,
-                screenshot_cache_index_path: PathBuf::from("/tmp/test-preview-cache.json"),
-                screenshot_refresh_token: Some("token".to_string()),
-                screenshot_refresh_concurrency: DEFAULT_SCREENSHOT_REFRESH_CONCURRENCY,
-                screenshot_refresh_urls_path: PathBuf::from("config/preview-urls.json"),
-                log_level: DEFAULT_LOG_LEVEL,
-                log_preview_url_mode: DEFAULT_LOG_PREVIEW_URL_MODE,
-            },
+            config: test_runtime_config(),
         };
         let now = Instant::now();
 
@@ -1815,6 +1859,74 @@ mod tests {
             decide_screenshot_cache_action(now, None, 60),
             ScreenshotCacheDecision::MissingOrExpired
         );
+    }
+
+    #[tokio::test]
+    async fn metadata_fetch_failure_still_uses_screenshot_fallback() {
+        let target_url = Url::parse("https://www.linkedin.com/in/example").expect("valid URL");
+        let cached_image = "data:image/png;base64,cached-fallback";
+        let state = test_state_with_screenshot_entry(&target_url, cached_image);
+
+        let outcome = build_preview_payload_from_metadata_result(
+            Err("received non-success response"),
+            target_url.clone(),
+            &state,
+            "req-test",
+        )
+        .await;
+
+        assert_eq!(
+            outcome.metadata_fetch_error,
+            Some("received non-success response"),
+            "metadata should degrade recoverably when upstream fetch fails"
+        );
+        assert_eq!(outcome.payload.ok, true);
+        assert_eq!(outcome.payload.title.as_deref(), Some("linkedin.com"));
+        assert_eq!(outcome.payload.description, None);
+        assert_eq!(outcome.payload.image.as_deref(), Some(cached_image));
+
+        let screenshot = outcome
+            .screenshot_fallback
+            .as_ref()
+            .expect("fallback should still run after metadata failure");
+        assert_eq!(screenshot.cache_decision, ScreenshotCacheDecision::Fresh);
+        assert_eq!(screenshot.used_cached_image, true);
+    }
+
+    #[tokio::test]
+    async fn metadata_fetch_failure_no_screenshot_returns_ok_with_minimal_payload() {
+        let target_url = Url::parse("https://www.it.tamu.edu/").expect("valid URL");
+        let state = AppState {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            screenshot_cache: Arc::new(RwLock::new(ScreenshotCacheStore {
+                file_path: PathBuf::from("/tmp/test-preview-cache.json"),
+                entries: HashMap::new(),
+            })),
+            screenshot_refresh_in_flight: Arc::new(RwLock::new(HashSet::new())),
+            config: test_runtime_config(),
+        };
+
+        let outcome = build_preview_payload_from_metadata_result(
+            Err("failed reading response body"),
+            target_url,
+            &state,
+            "req-test",
+        )
+        .await;
+
+        assert_eq!(outcome.metadata_fetch_error, Some("failed reading response body"));
+        assert_eq!(outcome.payload.ok, true);
+        assert_eq!(outcome.payload.title.as_deref(), Some("it.tamu.edu"));
+        assert_eq!(outcome.payload.description, None);
+        assert_eq!(outcome.payload.image, None);
+
+        let screenshot = outcome
+            .screenshot_fallback
+            .as_ref()
+            .expect("fallback branch should still execute");
+        assert_eq!(screenshot.worker_attempted, true);
+        assert_eq!(screenshot.worker_succeeded, false);
+        assert_eq!(screenshot.error_class, Some("screenshot_worker_unconfigured"));
     }
 }
 
