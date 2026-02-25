@@ -113,23 +113,7 @@ mod frontend {
         }
     }
 
-    fn prefers_reduced_motion() -> bool {
-        window()
-            .and_then(|w| {
-                w.match_media("(prefers-reduced-motion: reduce)")
-                    .ok()
-                    .flatten()
-            })
-            .map(|mq| mq.matches())
-            .unwrap_or(false)
-    }
-
     fn apply_theme_with_transition(theme: Theme) {
-        if prefers_reduced_motion() {
-            apply_theme(theme);
-            return;
-        }
-
         let Some(document) = window().and_then(|w| w.document()) else {
             apply_theme(theme);
             return;
