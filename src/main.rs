@@ -10,7 +10,7 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod frontend {
-    use js_sys::{ArrayBuffer, Function, WebAssembly};
+    use js_sys::{Array, ArrayBuffer, Date, Function, Object, Reflect, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
     use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Storage};
     use yew::prelude::*;
@@ -137,56 +137,114 @@ mod frontend {
         }
     }
 
-    fn js_eval_string(source: &str) -> Option<String> {
-        let evaluator = Function::new_no_args(source);
-        evaluator
-            .call0(&wasm_bindgen::JsValue::NULL)
-            .ok()?
-            .as_string()
+    fn js_string(value: &str) -> wasm_bindgen::JsValue {
+        wasm_bindgen::JsValue::from_str(value)
+    }
+
+    fn intl_formatter(locale: &str, options: &[(&str, &str)]) -> Option<wasm_bindgen::JsValue> {
+        let options_object = Object::new();
+        for (key, value) in options {
+            Reflect::set(&options_object, &js_string(key), &js_string(value)).ok()?;
+        }
+
+        let intl = Reflect::get(&js_sys::global(), &js_string("Intl")).ok()?;
+        let constructor = Reflect::get(&intl, &js_string("DateTimeFormat")).ok()?;
+        let constructor = constructor.dyn_into::<Function>().ok()?;
+        let args = Array::new();
+        args.push(&js_string(locale));
+        args.push(&options_object);
+        Reflect::construct(&constructor, &args).ok()
+    }
+
+    fn call_date_formatter_method(
+        formatter: &wasm_bindgen::JsValue,
+        method: &str,
+        date: &Date,
+    ) -> Option<wasm_bindgen::JsValue> {
+        let method = Reflect::get(formatter, &js_string(method)).ok()?;
+        let method = method.dyn_into::<Function>().ok()?;
+        method.call1(formatter, &date.clone().into()).ok()
+    }
+
+    fn fallback_utc_date() -> SimpleDate {
+        let now = Date::new_0();
+        SimpleDate {
+            year: now.get_utc_full_year() as i32,
+            month: now.get_utc_month() + 1,
+            day: now.get_utc_date(),
+        }
+    }
+
+    fn apply_pending_pointer_preview(
+        pending: PendingPointerPreview,
+        preview_anchor: &UseStateHandle<Option<PreviewAnchor>>,
+        preview_size: &UseStateHandle<(f64, f64)>,
+        preview_card: &UseStateHandle<PreviewCardState>,
+    ) {
+        let anchor = PreviewAnchor::Pointer {
+            client_x: pending.client_x,
+            client_y: pending.client_y,
+        };
+        preview_anchor.set(Some(anchor));
+        let (preview_width, preview_height) = **preview_size;
+        let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
+        preview_card.set(PreviewCardState::from_asset(pending.asset, x, y));
     }
 
     fn formatted_college_station_time() -> String {
-        js_eval_string(
-            "try {
-                return new Intl.DateTimeFormat('en-US', {
-                    timeZone: 'America/Chicago',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: true
-                }).format(new Date());
-            } catch (_) {
-                return null;
-            }",
+        let now = Date::new_0();
+        intl_formatter(
+            "en-US",
+            &[
+                ("timeZone", "America/Chicago"),
+                ("hour", "numeric"),
+                ("minute", "2-digit"),
+                ("second", "2-digit"),
+                ("hour12", "true"),
+            ],
         )
+        .and_then(|formatter| call_date_formatter_method(&formatter, "format", &now))
+        .and_then(|value| value.as_string())
         .unwrap_or_else(|| "time unavailable".to_owned())
     }
 
     fn chicago_iso_date() -> Option<SimpleDate> {
-        let iso = js_eval_string(
-            "try {
-                return new Intl.DateTimeFormat('en-CA', {
-                    timeZone: 'America/Chicago',
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
-                }).format(new Date());
-            } catch (_) {
-                return null;
-            }",
-        )
-        .or_else(|| {
-            let now = js_sys::Date::new_0();
-            let year = now.get_utc_full_year();
-            let month = now.get_utc_month() + 1;
-            let day = now.get_utc_date();
-            Some(format!("{year:04}-{month:02}-{day:02}"))
-        })?;
+        let now = Date::new_0();
+        let formatter = intl_formatter(
+            "en-US",
+            &[
+                ("timeZone", "America/Chicago"),
+                ("year", "numeric"),
+                ("month", "2-digit"),
+                ("day", "2-digit"),
+            ],
+        );
+        let parts = formatter
+            .and_then(|value| call_date_formatter_method(&value, "formatToParts", &now))
+            .and_then(|value| value.dyn_into::<Array>().ok());
 
-        let mut parts = iso.split('-');
-        let year = parts.next()?.parse::<i32>().ok()?;
-        let month = parts.next()?.parse::<u32>().ok()?;
-        let day = parts.next()?.parse::<u32>().ok()?;
+        let extract = |name: &str| -> Option<String> {
+            let parts = parts.as_ref()?;
+            parts.iter().find_map(|part| {
+                let part_type = Reflect::get(&part, &js_string("type")).ok()?.as_string()?;
+                if part_type == name {
+                    Reflect::get(&part, &js_string("value")).ok()?.as_string()
+                } else {
+                    None
+                }
+            })
+        };
+
+        let parsed = (|| {
+            let year = extract("year")?.parse::<i32>().ok()?;
+            let month = extract("month")?.parse::<u32>().ok()?;
+            let day = extract("day")?.parse::<u32>().ok()?;
+            Some(SimpleDate { year, month, day })
+        })();
+
+        let fallback = fallback_utc_date();
+        let SimpleDate { year, month, day } = parsed.unwrap_or(fallback);
+
         if !(1..=12).contains(&month) {
             return None;
         }
@@ -413,6 +471,13 @@ mod frontend {
         alt: AttrValue,
     }
 
+    #[derive(Clone)]
+    struct PendingPointerPreview {
+        asset: PreviewAsset,
+        client_x: i32,
+        client_y: i32,
+    }
+
     #[derive(Clone, PartialEq)]
     struct PreviewCardState {
         visible: bool,
@@ -555,6 +620,9 @@ mod frontend {
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
         let preview_size = use_state(|| (PREVIEW_INITIAL_WIDTH, PREVIEW_INITIAL_HEIGHT));
+        let pending_pointer_preview = use_mut_ref(|| Option::<PendingPointerPreview>::None);
+        let pointer_raf_handle = use_mut_ref(|| Option::<i32>::None);
+        let pointer_raf_closure = use_mut_ref(|| Option::<Closure<dyn FnMut()>>::None);
 
         {
             let theme = theme.clone();
@@ -620,17 +688,95 @@ mod frontend {
             let preview_card = preview_card.clone();
             let preview_anchor = preview_anchor.clone();
             let preview_size = preview_size.clone();
+            let pending_pointer_preview = pending_pointer_preview.clone();
+            let pointer_raf_handle = pointer_raf_handle.clone();
+            let pointer_raf_closure = pointer_raf_closure.clone();
             Callback::from(
                 move |(asset, client_x, client_y): (PreviewAsset, i32, i32)| {
-                    let anchor = PreviewAnchor::Pointer { client_x, client_y };
-                    preview_anchor.set(Some(anchor));
-                    let (preview_width, preview_height) = *preview_size;
-                    let (x, y) =
-                        preview_position_from_anchor(anchor, preview_width, preview_height);
-                    preview_card.set(PreviewCardState::from_asset(asset, x, y));
+                    *pending_pointer_preview.borrow_mut() = Some(PendingPointerPreview {
+                        asset,
+                        client_x,
+                        client_y,
+                    });
+
+                    if pointer_raf_handle.borrow().is_some() {
+                        return;
+                    }
+
+                    let preview_card = preview_card.clone();
+                    let preview_anchor = preview_anchor.clone();
+                    let preview_size = preview_size.clone();
+                    let pending_pointer_preview = pending_pointer_preview.clone();
+                    let pointer_raf_handle = pointer_raf_handle.clone();
+                    let pointer_raf_closure = pointer_raf_closure.clone();
+                    let preview_card_for_raf = preview_card.clone();
+                    let preview_anchor_for_raf = preview_anchor.clone();
+                    let preview_size_for_raf = preview_size.clone();
+                    let pending_pointer_preview_for_raf = pending_pointer_preview.clone();
+                    let pointer_raf_handle_for_raf = pointer_raf_handle.clone();
+                    let pointer_raf_closure_for_raf = pointer_raf_closure.clone();
+                    let callback = Closure::<dyn FnMut()>::new(move || {
+                        *pointer_raf_handle_for_raf.borrow_mut() = None;
+
+                        let Some(pending) = pending_pointer_preview_for_raf.borrow_mut().take()
+                        else {
+                            *pointer_raf_closure_for_raf.borrow_mut() = None;
+                            return;
+                        };
+
+                        apply_pending_pointer_preview(
+                            pending,
+                            &preview_anchor_for_raf,
+                            &preview_size_for_raf,
+                            &preview_card_for_raf,
+                        );
+                        *pointer_raf_closure_for_raf.borrow_mut() = None;
+                    });
+
+                    let mut ran_fallback = false;
+                    if let Some(win) = window() {
+                        match win.request_animation_frame(callback.as_ref().unchecked_ref()) {
+                            Ok(handle) => {
+                                *pointer_raf_handle.borrow_mut() = Some(handle);
+                                *pointer_raf_closure.borrow_mut() = Some(callback);
+                            }
+                            Err(_) => {
+                                ran_fallback = true;
+                            }
+                        }
+                    } else {
+                        ran_fallback = true;
+                    }
+
+                    if ran_fallback {
+                        if let Some(pending) = pending_pointer_preview.borrow_mut().take() {
+                            apply_pending_pointer_preview(
+                                pending,
+                                &preview_anchor,
+                                &preview_size,
+                                &preview_card,
+                            );
+                        }
+                    }
                 },
             )
         };
+
+        {
+            let pointer_raf_handle = pointer_raf_handle.clone();
+            let pointer_raf_closure = pointer_raf_closure.clone();
+            use_effect_with((), move |_| {
+                move || {
+                    if let Some(win) = window() {
+                        if let Some(handle) = *pointer_raf_handle.borrow() {
+                            let _ = win.cancel_animation_frame(handle);
+                        }
+                    }
+                    *pointer_raf_handle.borrow_mut() = None;
+                    *pointer_raf_closure.borrow_mut() = None;
+                }
+            });
+        }
 
         let on_focus_preview = {
             let preview_card = preview_card.clone();
