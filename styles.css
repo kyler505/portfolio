@@ -312,6 +312,11 @@ a {
   background: #500000;
 }
 
+.link.brand-link:hover::after,
+.link.brand-link:focus-visible::after {
+  background: #fff;
+}
+
 .external-mark {
   font-size: 0.8em;
   margin-left: 0.15rem;
