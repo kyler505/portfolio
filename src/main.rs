@@ -33,10 +33,7 @@ mod frontend {
     const METRIC_ROTATION_MS: i32 = 3200;
     const THEME_SWITCH_ANIMATION_MS: u32 = 320;
     const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
-    const GITHUB_REPO_OWNER: &str = "kyler505";
-    const GITHUB_REPO_NAME: &str = "portfolio";
-    const GITHUB_COMMITS_PER_PAGE: u32 = 100;
-    const GITHUB_MAX_PAGES: u32 = 60;
+    const GITHUB_ACCOUNT_LOGIN: &str = "kyler505";
     const ENERGY_START_YEAR: i32 = 2026;
     const ENERGY_START_MONTH: u32 = 1;
     const ENERGY_START_DAY: u32 = 12;
@@ -182,47 +179,19 @@ mod frontend {
         *timeout_handle.borrow_mut() = Some(clear_animation);
     }
 
-    fn github_month_range_iso() -> (String, String) {
+    fn github_month_date_range() -> (String, String) {
         let now = Date::new_0();
         let year = now.get_utc_full_year() as i32;
-        let month = now.get_utc_month() as i32 + 1;
-        let (next_year, next_month) = if month == 12 {
-            (year + 1, 1)
-        } else {
-            (year, month + 1)
-        };
+        let month = now.get_utc_month() + 1;
+        let last_day = days_in_month(year, month);
 
         (
-            format!("{year:04}-{month:02}-01T00:00:00Z"),
-            format!("{next_year:04}-{next_month:02}-01T00:00:00Z"),
+            format!("{year:04}-{month:02}-01"),
+            format!("{year:04}-{month:02}-{last_day:02}"),
         )
     }
 
-    fn parse_next_link(link_header: &str) -> Option<String> {
-        for segment in link_header.split(',') {
-            let trimmed = segment.trim();
-            if !trimmed.contains("rel=\"next\"") {
-                continue;
-            }
-
-            let start = trimmed.find('<')? + 1;
-            let end = trimmed[start..].find('>')? + start;
-            return Some(trimmed[start..end].to_owned());
-        }
-
-        None
-    }
-
-    fn count_commits_from_payload(payload: &wasm_bindgen::JsValue) -> Option<u32> {
-        if Array::is_array(payload) {
-            return Some(Array::from(payload).length());
-        }
-
-        let items = Reflect::get(payload, &js_string("items")).ok()?;
-        if Array::is_array(&items) {
-            return Some(Array::from(&items).length());
-        }
-
+    fn count_total_commits_from_payload(payload: &wasm_bindgen::JsValue) -> Option<u32> {
         let total_count = Reflect::get(payload, &js_string("total_count")).ok()?;
         let total_count = total_count.as_f64()?;
         if !total_count.is_finite() || total_count < 0.0 || total_count.fract() != 0.0 {
@@ -236,7 +205,14 @@ mod frontend {
         Some(total_count as u32)
     }
 
-    async fn fetch_commit_page_count(url: &str) -> Result<(u32, Option<String>), ()> {
+    fn github_commit_search_url(login: &str) -> String {
+        let (month_start, month_end) = github_month_date_range();
+        let query = format!("author:{login} author-date:{month_start}..{month_end}");
+        let encoded_query = js_sys::encode_uri_component(&query);
+        format!("https://api.github.com/search/commits?q={encoded_query}&per_page=1")
+    }
+
+    async fn fetch_total_commits(url: &str) -> Result<u32, ()> {
         let Some(win) = window() else {
             return Err(());
         };
@@ -245,6 +221,9 @@ mod frontend {
         init.set_method("GET");
         init.set_mode(RequestMode::Cors);
         let request = Request::new_with_str_and_init(url, &init).map_err(|_| ())?;
+        let _ = request
+            .headers()
+            .set("Accept", "application/vnd.github+json");
         let response_value = JsFuture::from(win.fetch_with_request(&request))
             .await
             .map_err(|_| ())?;
@@ -252,13 +231,6 @@ mod frontend {
         if !response.ok() {
             return Err(());
         }
-
-        let next_page = response
-            .headers()
-            .get("link")
-            .ok()
-            .flatten()
-            .and_then(|header| parse_next_link(&header));
 
         let text_promise = response
             .text()
@@ -269,31 +241,12 @@ mod frontend {
             .as_string()
             .ok_or(())?;
         let payload = JSON::parse(&body_text).map_err(|_| ())?;
-        let count = count_commits_from_payload(&payload).ok_or(())?;
-
-        Ok((count, next_page))
+        count_total_commits_from_payload(&payload).ok_or(())
     }
 
-    async fn fetch_commits_this_month(owner: &str, repo: &str) -> Result<u32, ()> {
-        let (since, until) = github_month_range_iso();
-        let mut next_url = Some(format!(
-            "https://api.github.com/repos/{owner}/{repo}/commits?since={since}&until={until}&per_page={GITHUB_COMMITS_PER_PAGE}"
-        ));
-        let mut total: u32 = 0;
-        let mut page_count: u32 = 0;
-
-        while let Some(url) = next_url.take() {
-            page_count += 1;
-            if page_count > GITHUB_MAX_PAGES {
-                return Err(());
-            }
-
-            let (count, next) = fetch_commit_page_count(&url).await?;
-            total = total.checked_add(count).ok_or(())?;
-            next_url = next;
-        }
-
-        Ok(total)
+    async fn fetch_commits_this_month(login: &str) -> Result<u32, ()> {
+        let url = github_commit_search_url(login);
+        fetch_total_commits(&url).await
     }
 
     fn js_string(value: &str) -> wasm_bindgen::JsValue {
@@ -830,7 +783,7 @@ mod frontend {
             let commits_this_month = commits_this_month.clone();
             use_effect_with((), move |_| {
                 spawn_local(async move {
-                    let value = fetch_commits_this_month(GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
+                    let value = fetch_commits_this_month(GITHUB_ACCOUNT_LOGIN)
                         .await
                         .map(|count| count.to_string())
                         .unwrap_or_else(|_| COMMITS_THIS_MONTH_FALLBACK.to_owned());
