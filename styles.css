@@ -405,32 +405,6 @@ footer {
   transition: background-color var(--theme-transition-fast) var(--theme-transition-ease);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  body,
-  .skip-link:focus-visible,
-  .theme-toggle,
-  .theme-toggle-icon svg,
-  body::before,
-  .page-shell,
-  .section-block,
-  .muted,
-  .metric-label,
-  .site-footer,
-  .link,
-  .hover-preview,
-  .hover-preview-media {
-    animation-duration: 1ms;
-    transition-duration: 1ms;
-  }
-
-  html[data-theme-switching="true"] body::before {
-    animation: none !important;
-    transition: none !important;
-    opacity: 0 !important;
-    transform: none !important;
-  }
-}
-
 @media (max-width: 42rem) {
   body {
     padding: 2.8rem 1.25rem;
