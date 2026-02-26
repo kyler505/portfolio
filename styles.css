@@ -296,31 +296,20 @@ a {
   content: "";
   height: 2px;
   left: 0;
-  opacity: 0;
   position: absolute;
-  transform: translateX(-16%) scaleX(0.2);
-  transform-origin: left;
-  transition: transform 300ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 240ms ease;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 300ms cubic-bezier(0.2, 0.9, 0.2, 1);
   width: 100%;
 }
 
 .link:hover::after,
 .link:focus-visible::after {
-  opacity: 1;
-  transform: translateX(0) scaleX(1);
+  transform: scaleX(1);
 }
 
 .link.brand-link::after {
   background: #500000;
-  opacity: 0;
-  transform: translateX(-16%) scaleX(0.2);
-  transition: transform 300ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 240ms ease;
-}
-
-.link.brand-link:hover::after,
-.link.brand-link:focus-visible::after {
-  opacity: 1;
-  transform: translateX(0) scaleX(1);
 }
 
 .external-mark {
@@ -440,7 +429,6 @@ footer {
 
   .link::after {
     animation: none !important;
-    transform: none !important;
     transition: none !important;
   }
 
