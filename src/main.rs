@@ -10,13 +10,13 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod frontend {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
     use gloo_timers::callback::Timeout;
     use js_sys::{Array, ArrayBuffer, Date, Function, JSON, Object, Reflect, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
     use wasm_bindgen_futures::{spawn_local, JsFuture};
-    use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Request, RequestInit, RequestMode, Response, Storage};
+    use web_sys::{window, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent, Request, RequestInit, RequestMode, Response, Storage};
     use yew::prelude::*;
 
     const THEME_KEY: &str = "portfolio-theme";
@@ -29,6 +29,7 @@ mod frontend {
     const PREVIEW_INITIAL_HEIGHT: f64 = 260.0;
     const PREVIEW_DEFAULT_IMAGE: &str = "/previews/default.svg";
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
+    const PREVIEW_LOADING_ALT: &str = "Preview loading";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
     const THEME_SWITCH_ANIMATION_MS: u32 = 320;
@@ -39,6 +40,15 @@ mod frontend {
     const ENERGY_START_YEAR: i32 = 2026;
     const ENERGY_START_MONTH: u32 = 1;
     const ENERGY_START_DAY: u32 = 12;
+    const PREVIEW_PRELOAD_URLS: [&str; 7] = [
+        PREVIEW_DEFAULT_IMAGE,
+        "/previews/manual/techhub.png",
+        "/previews/og/project-shade-og.png",
+        "/previews/og/temp-data-pipeline-og.png",
+        "/previews/og/techhub-delivery-platform-og.png",
+        GITHUB_LINK_SCREENSHOT,
+        "/previews/manual/linkedin.png",
+    ];
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -404,7 +414,17 @@ mod frontend {
         preview_anchor: &UseStateHandle<Option<PreviewAnchor>>,
         preview_size: &UseStateHandle<(f64, f64)>,
         preview_card: &UseStateHandle<PreviewCardState>,
+        active_preview_target: &UseStateHandle<Option<PreviewAsset>>,
+        loaded_preview_urls: &Rc<RefCell<HashSet<String>>>,
     ) {
+        let target_asset = pending.asset;
+        active_preview_target.set(Some(target_asset.clone()));
+
+        let display_asset = {
+            let loaded_preview_urls = loaded_preview_urls.borrow();
+            display_preview_asset(&target_asset, &loaded_preview_urls)
+        };
+
         let anchor = PreviewAnchor::Pointer {
             client_x: pending.client_x,
             client_y: pending.client_y,
@@ -412,7 +432,7 @@ mod frontend {
         preview_anchor.set(Some(anchor));
         let (preview_width, preview_height) = **preview_size;
         let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
-        preview_card.set(PreviewCardState::from_asset(pending.asset, x, y));
+        preview_card.set(PreviewCardState::from_asset(display_asset, x, y));
     }
 
     fn clear_pending_pointer_preview(
@@ -776,6 +796,17 @@ mod frontend {
         })
     }
 
+    fn display_preview_asset(target: &PreviewAsset, loaded_preview_urls: &HashSet<String>) -> PreviewAsset {
+        if loaded_preview_urls.contains(target.src.as_str()) {
+            return target.clone();
+        }
+
+        PreviewAsset {
+            src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
+            alt: AttrValue::from(PREVIEW_LOADING_ALT),
+        }
+    }
+
     #[derive(Properties, PartialEq)]
     struct ExternalLinkProps {
         href: AttrValue,
@@ -868,6 +899,62 @@ mod frontend {
         let pending_pointer_preview = use_mut_ref(|| Option::<PendingPointerPreview>::None);
         let pointer_raf_handle = use_mut_ref(|| Option::<i32>::None);
         let pointer_raf_closure = use_mut_ref(|| Option::<Closure<dyn FnMut()>>::None);
+        let loaded_preview_urls = use_mut_ref(|| HashSet::<String>::new());
+        let preload_images = use_mut_ref(Vec::<HtmlImageElement>::new);
+        let active_preview_target = use_state(|| Option::<PreviewAsset>::None);
+
+        {
+            let loaded_preview_urls = loaded_preview_urls.clone();
+            let preload_images = preload_images.clone();
+            let active_preview_target = active_preview_target.clone();
+            let preview_card = preview_card.clone();
+            use_effect_with((), move |_| {
+                for url in PREVIEW_PRELOAD_URLS {
+                    let seen = loaded_preview_urls.borrow_mut();
+                    if seen.contains(url) {
+                        continue;
+                    }
+                    drop(seen);
+
+                    let Ok(image) = HtmlImageElement::new() else {
+                        continue;
+                    };
+
+                    let url_string = url.to_owned();
+                    let loaded_preview_urls = loaded_preview_urls.clone();
+                    let active_preview_target = active_preview_target.clone();
+                    let preview_card = preview_card.clone();
+                    let onload = Closure::<dyn FnMut()>::new(move || {
+                        loaded_preview_urls.borrow_mut().insert(url_string.clone());
+
+                        let Some(target_asset) = (*active_preview_target).clone() else {
+                            return;
+                        };
+                        if target_asset.src.as_str() != url_string {
+                            return;
+                        }
+
+                        let mut next = (*preview_card).clone();
+                        if !next.visible {
+                            return;
+                        }
+                        next.src = target_asset.src;
+                        next.alt = target_asset.alt;
+                        preview_card.set(next);
+                    });
+
+                    image.set_onload(Some(onload.as_ref().unchecked_ref()));
+                    onload.forget();
+                    image.set_src(url);
+                    preload_images.borrow_mut().push(image);
+                }
+
+                let preload_images = preload_images.clone();
+                move || {
+                    preload_images.borrow_mut().clear();
+                }
+            });
+        }
 
         {
             let theme = theme.clone();
@@ -973,6 +1060,8 @@ mod frontend {
             let pending_pointer_preview = pending_pointer_preview.clone();
             let pointer_raf_handle = pointer_raf_handle.clone();
             let pointer_raf_closure = pointer_raf_closure.clone();
+            let active_preview_target = active_preview_target.clone();
+            let loaded_preview_urls = loaded_preview_urls.clone();
             Callback::from(
                 move |(asset, client_x, client_y): (PreviewAsset, i32, i32)| {
                     *pending_pointer_preview.borrow_mut() = Some(PendingPointerPreview {
@@ -997,6 +1086,8 @@ mod frontend {
                     let pending_pointer_preview_for_raf = pending_pointer_preview.clone();
                     let pointer_raf_handle_for_raf = pointer_raf_handle.clone();
                     let pointer_raf_closure_for_raf = pointer_raf_closure.clone();
+                    let active_preview_target_for_raf = active_preview_target.clone();
+                    let loaded_preview_urls_for_raf = loaded_preview_urls.clone();
                     let callback = Closure::<dyn FnMut()>::new(move || {
                         *pointer_raf_handle_for_raf.borrow_mut() = None;
 
@@ -1011,6 +1102,8 @@ mod frontend {
                             &preview_anchor_for_raf,
                             &preview_size_for_raf,
                             &preview_card_for_raf,
+                            &active_preview_target_for_raf,
+                            &loaded_preview_urls_for_raf,
                         );
                         *pointer_raf_closure_for_raf.borrow_mut() = None;
                     });
@@ -1037,6 +1130,8 @@ mod frontend {
                                 &preview_anchor,
                                 &preview_size,
                                 &preview_card,
+                                &active_preview_target,
+                                &loaded_preview_urls,
                             );
                         }
                     }
@@ -1063,12 +1158,19 @@ mod frontend {
             let preview_card = preview_card.clone();
             let preview_anchor = preview_anchor.clone();
             let preview_size = preview_size.clone();
+            let active_preview_target = active_preview_target.clone();
+            let loaded_preview_urls = loaded_preview_urls.clone();
             Callback::from(move |asset: PreviewAsset| {
+                active_preview_target.set(Some(asset.clone()));
                 let anchor = PreviewAnchor::Focus;
                 preview_anchor.set(Some(anchor));
                 let (preview_width, preview_height) = *preview_size;
                 let (x, y) = preview_position_from_anchor(anchor, preview_width, preview_height);
-                preview_card.set(PreviewCardState::from_asset(asset, x, y));
+                let display_asset = {
+                    let loaded_preview_urls = loaded_preview_urls.borrow();
+                    display_preview_asset(&asset, &loaded_preview_urls)
+                };
+                preview_card.set(PreviewCardState::from_asset(display_asset, x, y));
             })
         };
 
@@ -1078,12 +1180,14 @@ mod frontend {
             let pending_pointer_preview = pending_pointer_preview.clone();
             let pointer_raf_handle = pointer_raf_handle.clone();
             let pointer_raf_closure = pointer_raf_closure.clone();
+            let active_preview_target = active_preview_target.clone();
             Callback::from(move |_| {
                 clear_pending_pointer_preview(
                     &pending_pointer_preview,
                     &pointer_raf_handle,
                     &pointer_raf_closure,
                 );
+                active_preview_target.set(None);
                 preview_anchor.set(None);
                 let mut next = (*preview_card).clone();
                 next.visible = false;
@@ -1334,7 +1438,6 @@ mod frontend {
                         class="hover-preview-media"
                         src={preview_card.src.clone()}
                         alt={preview_card.alt.clone()}
-                        loading="lazy"
                         onload={on_preview_media_loaded.clone()}
                         onerror={on_preview_media_loaded}
                     />

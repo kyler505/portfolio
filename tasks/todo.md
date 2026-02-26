@@ -242,3 +242,18 @@
 - Theme toggle keeps working in production and persists across reload.
 - Local release checks pass and changes are pushed to `origin/main`.
 - Production verification includes deployed URL and observed metric/theme behavior evidence.
+
+## 2026-02-26 hover preview first-load mismatch fix
+- [x] Restate goal + acceptance criteria
+- [x] Inspect shared hover preview state and first-hover image loading path
+- [x] Preload known ExternalLink preview assets on mount with panic-safe browser image objects
+- [x] Prevent stale hover image display while target asset is still loading
+- [x] Remove lazy-loading from floating preview media
+- [x] Run verification (`cargo check --target wasm32-unknown-unknown`, `trunk build --release`)
+- [ ] Commit and push to `origin/main`
+
+### Acceptance Criteria
+- Known preview assets are requested on startup so first interaction has warm cache where possible.
+- Hover/focus preview never flashes a previous link screenshot when target asset is not yet ready.
+- Floating preview remains positioned and animated exactly as before.
+- Required verification commands succeed.
