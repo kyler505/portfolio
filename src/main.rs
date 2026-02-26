@@ -1147,7 +1147,7 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — temperature-focused data pipelines for daily maximum (Tmax) prediction"}</span>
+                                        <span class="muted">{" — data pipelines for daily temp max prediction"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
