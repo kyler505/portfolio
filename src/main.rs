@@ -33,6 +33,8 @@ mod frontend {
     const METRIC_ROTATION_MS: i32 = 3200;
     const THEME_SWITCH_ANIMATION_MS: u32 = 320;
     const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
+    const COMMITS_CACHE_KEY: &str = "portfolio-commits-this-month-cache";
+    const COMMITS_CACHE_MAX_AGE_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
     const GITHUB_ACCOUNT_LOGIN: &str = "kyler505";
     const ENERGY_START_YEAR: i32 = 2026;
     const ENERGY_START_MONTH: u32 = 1;
@@ -61,6 +63,13 @@ mod frontend {
         year: i32,
         month: u32,
         day: u32,
+    }
+
+    #[derive(Clone)]
+    struct CommitsCacheEntry {
+        value: String,
+        fetched_at_ms: f64,
+        month_key: String,
     }
 
     impl Theme {
@@ -179,10 +188,18 @@ mod frontend {
         *timeout_handle.borrow_mut() = Some(clear_animation);
     }
 
-    fn github_month_date_range() -> (String, String) {
+    fn github_month_parts() -> (i32, u32) {
         let now = Date::new_0();
-        let year = now.get_utc_full_year() as i32;
-        let month = now.get_utc_month() + 1;
+        (now.get_utc_full_year() as i32, now.get_utc_month() + 1)
+    }
+
+    fn github_month_key() -> String {
+        let (year, month) = github_month_parts();
+        format!("{year:04}-{month:02}")
+    }
+
+    fn github_month_date_range() -> (String, String) {
+        let (year, month) = github_month_parts();
         let last_day = days_in_month(year, month);
 
         (
@@ -210,6 +227,74 @@ mod frontend {
         let query = format!("author:{login} author-date:{month_start}..{month_end}");
         let encoded_query = js_sys::encode_uri_component(&query);
         format!("https://api.github.com/search/commits?q={encoded_query}&per_page=1")
+    }
+
+    fn read_commits_cache() -> Option<CommitsCacheEntry> {
+        let raw = local_storage()?.get_item(COMMITS_CACHE_KEY).ok().flatten()?;
+        let payload = JSON::parse(&raw).ok()?;
+
+        let value = Reflect::get(&payload, &js_string("value"))
+            .ok()?
+            .as_string()?;
+        let fetched_at_ms = Reflect::get(&payload, &js_string("fetched_at_ms"))
+            .ok()?
+            .as_f64()?;
+        if !fetched_at_ms.is_finite() || fetched_at_ms < 0.0 {
+            return None;
+        }
+
+        let month_key = Reflect::get(&payload, &js_string("month_key"))
+            .ok()?
+            .as_string()?;
+
+        Some(CommitsCacheEntry {
+            value,
+            fetched_at_ms,
+            month_key,
+        })
+    }
+
+    fn write_commits_cache(value: &str, month_key: &str) {
+        let Some(storage) = local_storage() else {
+            return;
+        };
+
+        let payload = Object::new();
+        let _ = Reflect::set(&payload, &js_string("value"), &js_string(value));
+        let _ = Reflect::set(
+            &payload,
+            &js_string("fetched_at_ms"),
+            &wasm_bindgen::JsValue::from_f64(Date::now()),
+        );
+        let _ = Reflect::set(&payload, &js_string("month_key"), &js_string(month_key));
+
+        let serialized = JSON::stringify(&payload)
+            .ok()
+            .and_then(|value| value.as_string());
+        if let Some(serialized) = serialized {
+            let _ = storage.set_item(COMMITS_CACHE_KEY, &serialized);
+        }
+    }
+
+    fn is_fresh_month_cache(cache_entry: &CommitsCacheEntry, current_month_key: &str) -> bool {
+        if cache_entry.month_key != current_month_key {
+            return false;
+        }
+
+        let age_ms = Date::now() - cache_entry.fetched_at_ms;
+        age_ms >= 0.0 && age_ms < COMMITS_CACHE_MAX_AGE_MS
+    }
+
+    fn fallback_cached_commits_value(
+        cache_entry: Option<&CommitsCacheEntry>,
+        current_month_key: &str,
+    ) -> Option<String> {
+        let cache_entry = cache_entry?;
+        if cache_entry.month_key == current_month_key {
+            return Some(cache_entry.value.clone());
+        }
+
+        Some(cache_entry.value.clone())
     }
 
     async fn fetch_total_commits(url: &str) -> Result<u32, ()> {
@@ -247,6 +332,27 @@ mod frontend {
     async fn fetch_commits_this_month(login: &str) -> Result<u32, ()> {
         let url = github_commit_search_url(login);
         fetch_total_commits(&url).await
+    }
+
+    async fn resolve_commits_this_month(login: &str) -> String {
+        let current_month_key = github_month_key();
+        let cached = read_commits_cache();
+
+        if let Some(cache_entry) = cached.as_ref() {
+            if is_fresh_month_cache(cache_entry, &current_month_key) {
+                return cache_entry.value.clone();
+            }
+        }
+
+        match fetch_commits_this_month(login).await {
+            Ok(count) => {
+                let value = count.to_string();
+                write_commits_cache(&value, &current_month_key);
+                value
+            }
+            Err(_) => fallback_cached_commits_value(cached.as_ref(), &current_month_key)
+                .unwrap_or_else(|| COMMITS_THIS_MONTH_FALLBACK.to_owned()),
+        }
     }
 
     fn js_string(value: &str) -> wasm_bindgen::JsValue {
@@ -783,10 +889,7 @@ mod frontend {
             let commits_this_month = commits_this_month.clone();
             use_effect_with((), move |_| {
                 spawn_local(async move {
-                    let value = fetch_commits_this_month(GITHUB_ACCOUNT_LOGIN)
-                        .await
-                        .map(|count| count.to_string())
-                        .unwrap_or_else(|_| COMMITS_THIS_MONTH_FALLBACK.to_owned());
+                    let value = resolve_commits_this_month(GITHUB_ACCOUNT_LOGIN).await;
                     commits_this_month.set(AttrValue::from(value));
                 });
 
