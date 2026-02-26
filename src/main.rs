@@ -1140,14 +1140,14 @@ mod frontend {
                                             href="https://github.com/kyler505/temp-data-pipeline"
                                             label="Temp Data Pipeline"
                                             preview={PreviewAsset {
-                                                src: AttrValue::from(PREVIEW_DEFAULT_IMAGE),
-                                                alt: AttrValue::from("Preview placeholder for Temp Data Pipeline repository"),
+                                                src: AttrValue::from("/previews/og/temp-data-pipeline-og.png"),
+                                                alt: AttrValue::from("GitHub Open Graph image for Temp Data Pipeline repository"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — temporary data pipeline experiments and processing utilities"}</span>
+                                        <span class="muted">{" — temperature-focused data pipelines for daily maximum (Tmax) prediction"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
