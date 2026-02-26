@@ -1299,7 +1299,7 @@ mod frontend {
                                 <ExternalLink
                                     href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
                                     label="TechHub"
-                                    extra_class={classes!("brand-link")}
+                                    extra_class={classes!("techhub-link")}
                                     preview={PreviewAsset {
                                         src: AttrValue::from("/previews/manual/techhub.png"),
                                         alt: AttrValue::from("TechHub website screenshot"),
