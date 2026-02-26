@@ -33,7 +33,7 @@ mod frontend {
     const METRIC_ROTATION_MS: i32 = 3200;
     const THEME_SWITCH_ANIMATION_MS: u32 = 320;
     const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
-    const COMMITS_CACHE_KEY: &str = "portfolio-commits-this-month-cache";
+    const COMMITS_CACHE_KEY_PREFIX: &str = "portfolio-commits-this-month-cache";
     const COMMITS_CACHE_MAX_AGE_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
     const GITHUB_ACCOUNT_LOGIN: &str = "kyler505";
     const ENERGY_START_YEAR: i32 = 2026;
@@ -229,8 +229,13 @@ mod frontend {
         format!("https://api.github.com/search/commits?q={encoded_query}&per_page=1")
     }
 
-    fn read_commits_cache() -> Option<CommitsCacheEntry> {
-        let raw = local_storage()?.get_item(COMMITS_CACHE_KEY).ok().flatten()?;
+    fn commits_cache_key(login: &str) -> String {
+        format!("{COMMITS_CACHE_KEY_PREFIX}:{login}")
+    }
+
+    fn read_commits_cache(login: &str) -> Option<CommitsCacheEntry> {
+        let key = commits_cache_key(login);
+        let raw = local_storage()?.get_item(&key).ok().flatten()?;
         let payload = JSON::parse(&raw).ok()?;
 
         let value = Reflect::get(&payload, &js_string("value"))
@@ -254,7 +259,7 @@ mod frontend {
         })
     }
 
-    fn write_commits_cache(value: &str, month_key: &str) {
+    fn write_commits_cache(login: &str, value: &str, month_key: &str) {
         let Some(storage) = local_storage() else {
             return;
         };
@@ -272,7 +277,8 @@ mod frontend {
             .ok()
             .and_then(|value| value.as_string());
         if let Some(serialized) = serialized {
-            let _ = storage.set_item(COMMITS_CACHE_KEY, &serialized);
+            let key = commits_cache_key(login);
+            let _ = storage.set_item(&key, &serialized);
         }
     }
 
@@ -290,8 +296,8 @@ mod frontend {
         current_month_key: &str,
     ) -> Option<String> {
         let cache_entry = cache_entry?;
-        if cache_entry.month_key == current_month_key {
-            return Some(cache_entry.value.clone());
+        if cache_entry.month_key != current_month_key {
+            return None;
         }
 
         Some(cache_entry.value.clone())
@@ -336,7 +342,7 @@ mod frontend {
 
     async fn resolve_commits_this_month(login: &str) -> String {
         let current_month_key = github_month_key();
-        let cached = read_commits_cache();
+        let cached = read_commits_cache(login);
 
         if let Some(cache_entry) = cached.as_ref() {
             if is_fresh_month_cache(cache_entry, &current_month_key) {
@@ -347,7 +353,7 @@ mod frontend {
         match fetch_commits_this_month(login).await {
             Ok(count) => {
                 let value = count.to_string();
-                write_commits_cache(&value, &current_month_key);
+                write_commits_cache(login, &value, &current_month_key);
                 value
             }
             Err(_) => fallback_cached_commits_value(cached.as_ref(), &current_month_key)
