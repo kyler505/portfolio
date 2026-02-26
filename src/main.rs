@@ -13,7 +13,7 @@ mod frontend {
     use std::{cell::RefCell, rc::Rc};
 
     use gloo_timers::callback::Timeout;
-    use js_sys::{Array, ArrayBuffer, Date, Function, Object, Reflect, WebAssembly};
+    use js_sys::{Array, ArrayBuffer, Date, Function, JSON, Object, Reflect, WebAssembly};
     use wasm_bindgen::{closure::Closure, JsCast};
     use wasm_bindgen_futures::{spawn_local, JsFuture};
     use web_sys::{window, FocusEvent, HtmlElement, MouseEvent, Request, RequestInit, RequestMode, Response, Storage};
@@ -213,6 +213,29 @@ mod frontend {
         None
     }
 
+    fn count_commits_from_payload(payload: &wasm_bindgen::JsValue) -> Option<u32> {
+        if Array::is_array(payload) {
+            return Some(Array::from(payload).length());
+        }
+
+        let items = Reflect::get(payload, &js_string("items")).ok()?;
+        if Array::is_array(&items) {
+            return Some(Array::from(&items).length());
+        }
+
+        let total_count = Reflect::get(payload, &js_string("total_count")).ok()?;
+        let total_count = total_count.as_f64()?;
+        if !total_count.is_finite() || total_count < 0.0 || total_count.fract() != 0.0 {
+            return None;
+        }
+
+        if total_count > u32::MAX as f64 {
+            return None;
+        }
+
+        Some(total_count as u32)
+    }
+
     async fn fetch_commit_page_count(url: &str) -> Result<(u32, Option<String>), ()> {
         let Some(win) = window() else {
             return Err(());
@@ -237,11 +260,18 @@ mod frontend {
             .flatten()
             .and_then(|header| parse_next_link(&header));
 
-        let json_promise = response.json().map_err(|_| ())?;
-        let json = JsFuture::from(json_promise).await.map_err(|_| ())?;
-        let rows = json.dyn_into::<Array>().map_err(|_| ())?;
+        let text_promise = response
+            .text()
+            .map_err(|_| ())?;
+        let body_text = JsFuture::from(text_promise)
+            .await
+            .map_err(|_| ())?
+            .as_string()
+            .ok_or(())?;
+        let payload = JSON::parse(&body_text).map_err(|_| ())?;
+        let count = count_commits_from_payload(&payload).ok_or(())?;
 
-        Ok((rows.length(), next_page))
+        Ok((count, next_page))
     }
 
     async fn fetch_commits_this_month(owner: &str, repo: &str) -> Result<u32, ()> {
@@ -523,7 +553,7 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "energy drinks consumed",
+                label: "celcius cans crushed this year",
             },
             Metric {
                 value: commits_this_month.clone(),
@@ -834,13 +864,14 @@ mod frontend {
             let active_metric = active_metric.clone();
             let metric_cursor = metric_cursor.clone();
             let commits_this_month = commits_this_month.clone();
-            use_effect_with((), move |_| {
+            use_effect_with((*commits_this_month).clone(), move |latest_commits| {
                 let mut interval_id = None;
                 let mut callback = None;
+                let latest_commits = latest_commits.clone();
 
                 if let Some(win) = window() {
                     let tick = Closure::<dyn FnMut()>::new(move || {
-                        let metrics = current_metrics(&commits_this_month);
+                        let metrics = current_metrics(&latest_commits);
                         let len = metrics.len();
                         if len == 0 {
                             return;
