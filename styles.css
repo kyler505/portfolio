@@ -7,7 +7,7 @@
   --brand: #0b7a75;
   --border: #e5e5e5;
   --focus: #171717;
-  --brand-link: #800000;
+  --brand-link: #500000;
   --theme-transition-fast: 200ms;
   --theme-transition-normal: 220ms;
   --theme-switch-slide-ms: 390ms;
@@ -23,7 +23,7 @@
   --brand: #2dd4bf;
   --border: #262626;
   --focus: #fafafa;
-  --brand-link: #d79aa3;
+  --brand-link: #500000;
 }
 
 * {
@@ -280,21 +280,14 @@ a {
   transition: color var(--theme-transition-fast) var(--theme-transition-ease);
 }
 
-.brand-link {
-  color: var(--brand-link);
+.link.brand-link,
+.link.brand-link:link,
+.link.brand-link:visited,
+.link.brand-link:hover,
+.link.brand-link:focus-visible,
+.link.brand-link:active {
+  color: #500000;
   text-decoration: none;
-}
-
-.brand-link:visited,
-.brand-link:hover,
-.brand-link:focus-visible {
-  color: var(--brand-link);
-  text-decoration: none;
-}
-
-.link.brand-link::after {
-  content: none !important;
-  display: none !important;
 }
 
 .link::after {
@@ -313,6 +306,19 @@ a {
 
 .link:hover::after,
 .link:focus-visible::after {
+  opacity: 1;
+  transform: translateX(0) scaleX(1);
+}
+
+.link.brand-link::after {
+  background: #500000;
+  opacity: 0;
+  transform: translateX(-16%) scaleX(0.2);
+  transition: transform 300ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 240ms ease;
+}
+
+.link.brand-link:hover::after,
+.link.brand-link:focus-visible::after {
   opacity: 1;
   transform: translateX(0) scaleX(1);
 }
