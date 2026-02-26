@@ -10,7 +10,7 @@
   --brand-link: #500000;
   --theme-transition-fast: 200ms;
   --theme-transition-normal: 220ms;
-  --theme-switch-slide-ms: 390ms;
+  --theme-switch-slide-ms: 320ms;
   --theme-transition-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
@@ -51,19 +51,21 @@ body {
 
 body::before {
   background: linear-gradient(
-    108deg,
-    color-mix(in srgb, var(--brand) 56%, transparent),
-    color-mix(in srgb, var(--bg) 78%, var(--text) 22%),
-    color-mix(in srgb, var(--secondary) 82%, var(--brand) 18%)
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--brand) 16%, transparent) 28%,
+    color-mix(in srgb, var(--text) 10%, var(--bg) 90%) 50%,
+    color-mix(in srgb, var(--secondary) 58%, transparent) 72%,
+    transparent 100%
   );
   content: "";
-  inset: -10vh auto -10vh 0;
+  inset: -12vh auto -12vh 0;
   opacity: 0;
   pointer-events: none;
   position: fixed;
-  transform: translate3d(-118%, 0, 0) skewX(-8deg);
+  transform: translate3d(-126%, 0, 0);
   transform-origin: left center;
-  width: clamp(14rem, 32vw, 24rem);
+  width: clamp(18rem, 42vw, 34rem);
   will-change: transform, opacity;
   z-index: 50;
 }
@@ -168,21 +170,17 @@ h3 {
   display: block;
   height: 100%;
   width: 100%;
-  animation: theme-icon-swap 210ms var(--theme-transition-ease);
+  animation: theme-icon-swap 220ms var(--theme-transition-ease);
 }
 
 html[data-theme-switching="true"] body::before {
-  animation: theme-slide-curtain var(--theme-switch-slide-ms) cubic-bezier(0.2, 0.84, 0.28, 1);
-}
-
-html[data-theme-switching="true"] .page-shell {
-  animation: theme-shell-settle var(--theme-switch-slide-ms) var(--theme-transition-ease);
+  animation: theme-slide-sweep var(--theme-switch-slide-ms) cubic-bezier(0.26, 0.72, 0.19, 1);
 }
 
 @keyframes theme-icon-swap {
   from {
-    opacity: 0.5;
-    transform: rotate(-14deg) scale(0.84);
+    opacity: 0.62;
+    transform: rotate(-8deg) scale(0.9);
   }
 
   to {
@@ -191,37 +189,30 @@ html[data-theme-switching="true"] .page-shell {
   }
 }
 
-@keyframes theme-shell-settle {
-  from {
-    opacity: 0.94;
-    transform: translateX(-0.35rem);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes theme-slide-curtain {
+@keyframes theme-slide-sweep {
   0% {
     opacity: 0;
-    transform: translate3d(-118%, 0, 0) skewX(-8deg);
+    transform: translate3d(-126%, 0, 0);
   }
 
-  18% {
-    opacity: 0.74;
-    transform: translate3d(-76%, 0, 0) skewX(-8deg);
+  20% {
+    opacity: 0.2;
+    transform: translate3d(-82%, 0, 0);
   }
 
-  64% {
-    opacity: 0.62;
-    transform: translate3d(4%, 0, 0) skewX(-8deg);
+  56% {
+    opacity: 0.28;
+    transform: translate3d(-4%, 0, 0);
+  }
+
+  84% {
+    opacity: 0.12;
+    transform: translate3d(74%, 0, 0);
   }
 
   100% {
     opacity: 0;
-    transform: translate3d(132%, 0, 0) skewX(-8deg);
+    transform: translate3d(132%, 0, 0);
   }
 }
 
@@ -435,11 +426,8 @@ footer {
   html[data-theme-switching="true"] body::before {
     animation: none !important;
     transition: none !important;
-  }
-
-  html[data-theme-switching="true"] .page-shell {
-    animation: none !important;
-    transition: none !important;
+    opacity: 0 !important;
+    transform: none !important;
   }
 }
 

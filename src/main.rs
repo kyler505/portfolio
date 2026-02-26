@@ -31,7 +31,7 @@ mod frontend {
     const PREVIEW_DEFAULT_ALT: &str = "Project preview";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
-    const THEME_SWITCH_ANIMATION_MS: u32 = 390;
+    const THEME_SWITCH_ANIMATION_MS: u32 = 320;
     const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
     const GITHUB_REPO_OWNER: &str = "kyler505";
     const GITHUB_REPO_NAME: &str = "portfolio";
