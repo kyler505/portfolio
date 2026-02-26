@@ -427,11 +427,6 @@ footer {
     transition-duration: 1ms;
   }
 
-  .link::after {
-    animation: none !important;
-    transition: none !important;
-  }
-
   html[data-theme-switching="true"] body::before {
     animation: none !important;
     transition: none !important;
