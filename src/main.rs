@@ -33,8 +33,8 @@ mod frontend {
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
     const THEME_SWITCH_ANIMATION_MS: u32 = 320;
-    const COMMITS_THIS_MONTH_FALLBACK: &str = "12";
-    const COMMITS_CACHE_KEY_PREFIX: &str = "portfolio-commits-this-month-cache";
+    const COMMITS_THIS_YEAR_FALLBACK: &str = "12";
+    const COMMITS_CACHE_KEY_PREFIX: &str = "portfolio-commits-this-year-cache";
     const COMMITS_CACHE_MAX_AGE_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
     const GITHUB_ACCOUNT_LOGIN: &str = "kyler505";
     const ENERGY_START_YEAR: i32 = 2026;
@@ -79,7 +79,7 @@ mod frontend {
     struct CommitsCacheEntry {
         value: String,
         fetched_at_ms: f64,
-        month_key: String,
+        year_key: String,
     }
 
     impl Theme {
@@ -198,23 +198,22 @@ mod frontend {
         *timeout_handle.borrow_mut() = Some(clear_animation);
     }
 
-    fn github_month_parts() -> (i32, u32) {
+    fn github_year_parts() -> i32 {
         let now = Date::new_0();
-        (now.get_utc_full_year() as i32, now.get_utc_month() + 1)
+        now.get_utc_full_year() as i32
     }
 
-    fn github_month_key() -> String {
-        let (year, month) = github_month_parts();
-        format!("{year:04}-{month:02}")
+    fn github_year_key() -> String {
+        let year = github_year_parts();
+        format!("{year:04}")
     }
 
-    fn github_month_date_range() -> (String, String) {
-        let (year, month) = github_month_parts();
-        let last_day = days_in_month(year, month);
+    fn github_year_date_range() -> (String, String) {
+        let year = github_year_parts();
 
         (
-            format!("{year:04}-{month:02}-01"),
-            format!("{year:04}-{month:02}-{last_day:02}"),
+            format!("{year:04}-01-01"),
+            format!("{year:04}-12-31"),
         )
     }
 
@@ -233,8 +232,8 @@ mod frontend {
     }
 
     fn github_commit_search_url(login: &str) -> String {
-        let (month_start, month_end) = github_month_date_range();
-        let query = format!("author:{login} author-date:{month_start}..{month_end}");
+        let (year_start, year_end) = github_year_date_range();
+        let query = format!("author:{login} author-date:{year_start}..{year_end}");
         let encoded_query = js_sys::encode_uri_component(&query);
         format!("https://api.github.com/search/commits?q={encoded_query}&per_page=1")
     }
@@ -258,18 +257,18 @@ mod frontend {
             return None;
         }
 
-        let month_key = Reflect::get(&payload, &js_string("month_key"))
+        let year_key = Reflect::get(&payload, &js_string("year_key"))
             .ok()?
             .as_string()?;
 
         Some(CommitsCacheEntry {
             value,
             fetched_at_ms,
-            month_key,
+            year_key,
         })
     }
 
-    fn write_commits_cache(login: &str, value: &str, month_key: &str) {
+    fn write_commits_cache(login: &str, value: &str, year_key: &str) {
         let Some(storage) = local_storage() else {
             return;
         };
@@ -281,7 +280,7 @@ mod frontend {
             &js_string("fetched_at_ms"),
             &wasm_bindgen::JsValue::from_f64(Date::now()),
         );
-        let _ = Reflect::set(&payload, &js_string("month_key"), &js_string(month_key));
+        let _ = Reflect::set(&payload, &js_string("year_key"), &js_string(year_key));
 
         let serialized = JSON::stringify(&payload)
             .ok()
@@ -292,8 +291,8 @@ mod frontend {
         }
     }
 
-    fn is_fresh_month_cache(cache_entry: &CommitsCacheEntry, current_month_key: &str) -> bool {
-        if cache_entry.month_key != current_month_key {
+    fn is_fresh_year_cache(cache_entry: &CommitsCacheEntry, current_year_key: &str) -> bool {
+        if cache_entry.year_key != current_year_key {
             return false;
         }
 
@@ -303,10 +302,10 @@ mod frontend {
 
     fn fallback_cached_commits_value(
         cache_entry: Option<&CommitsCacheEntry>,
-        current_month_key: &str,
+        current_year_key: &str,
     ) -> Option<String> {
         let cache_entry = cache_entry?;
-        if cache_entry.month_key != current_month_key {
+        if cache_entry.year_key != current_year_key {
             return None;
         }
 
@@ -345,29 +344,29 @@ mod frontend {
         count_total_commits_from_payload(&payload).ok_or(())
     }
 
-    async fn fetch_commits_this_month(login: &str) -> Result<u32, ()> {
+    async fn fetch_commits_this_year(login: &str) -> Result<u32, ()> {
         let url = github_commit_search_url(login);
         fetch_total_commits(&url).await
     }
 
-    async fn resolve_commits_this_month(login: &str) -> String {
-        let current_month_key = github_month_key();
+    async fn resolve_commits_this_year(login: &str) -> String {
+        let current_year_key = github_year_key();
         let cached = read_commits_cache(login);
 
         if let Some(cache_entry) = cached.as_ref() {
-            if is_fresh_month_cache(cache_entry, &current_month_key) {
+            if is_fresh_year_cache(cache_entry, &current_year_key) {
                 return cache_entry.value.clone();
             }
         }
 
-        match fetch_commits_this_month(login).await {
+        match fetch_commits_this_year(login).await {
             Ok(count) => {
                 let value = count.to_string();
-                write_commits_cache(login, &value, &current_month_key);
+                write_commits_cache(login, &value, &current_year_key);
                 value
             }
-            Err(_) => fallback_cached_commits_value(cached.as_ref(), &current_month_key)
-                .unwrap_or_else(|| COMMITS_THIS_MONTH_FALLBACK.to_owned()),
+            Err(_) => fallback_cached_commits_value(cached.as_ref(), &current_year_key)
+                .unwrap_or_else(|| COMMITS_THIS_YEAR_FALLBACK.to_owned()),
         }
     }
 
@@ -626,7 +625,7 @@ mod frontend {
         format_wasm_heap_size(buffer.byte_length() as u64)
     }
 
-    fn current_metrics(commits_this_month: &AttrValue) -> [Metric; 4] {
+    fn current_metrics(commits_this_year: &AttrValue) -> [Metric; 4] {
         [
             Metric {
                 value: AttrValue::from(wasm_heap_size_value()),
@@ -641,8 +640,8 @@ mod frontend {
                 label: "celcius cans crushed this year",
             },
             Metric {
-                value: commits_this_month.clone(),
-                label: "commits this month",
+                value: commits_this_year.clone(),
+                label: "commits this year",
             },
         ]
     }
@@ -886,9 +885,9 @@ mod frontend {
     fn app() -> Html {
         let theme = use_state(resolve_theme);
         let theme_icon_cycle = use_state(|| 0u32);
-        let commits_this_month = use_state(|| AttrValue::from(COMMITS_THIS_MONTH_FALLBACK));
+        let commits_this_year = use_state(|| AttrValue::from(COMMITS_THIS_YEAR_FALLBACK));
         let active_metric = use_state(|| {
-            current_metrics(&AttrValue::from(COMMITS_THIS_MONTH_FALLBACK))[0].clone()
+            current_metrics(&AttrValue::from(COMMITS_THIS_YEAR_FALLBACK))[0].clone()
         });
         let metric_cursor = use_mut_ref(|| 0usize);
         let theme_animation_timeout = use_mut_ref(|| Option::<Timeout>::None);
@@ -979,11 +978,11 @@ mod frontend {
         };
 
         {
-            let commits_this_month = commits_this_month.clone();
+            let commits_this_year = commits_this_year.clone();
             use_effect_with((), move |_| {
                 spawn_local(async move {
-                    let value = resolve_commits_this_month(GITHUB_ACCOUNT_LOGIN).await;
-                    commits_this_month.set(AttrValue::from(value));
+                    let value = resolve_commits_this_year(GITHUB_ACCOUNT_LOGIN).await;
+                    commits_this_year.set(AttrValue::from(value));
                 });
 
                 || ()
@@ -993,8 +992,8 @@ mod frontend {
         {
             let active_metric = active_metric.clone();
             let metric_cursor = metric_cursor.clone();
-            let commits_this_month = commits_this_month.clone();
-            use_effect_with((*commits_this_month).clone(), move |latest_commits| {
+            let commits_this_year = commits_this_year.clone();
+            use_effect_with((*commits_this_year).clone(), move |latest_commits| {
                 let metrics = current_metrics(latest_commits);
                 let current_index = {
                     let cursor = metric_cursor.borrow();
@@ -1012,8 +1011,8 @@ mod frontend {
         {
             let active_metric = active_metric.clone();
             let metric_cursor = metric_cursor.clone();
-            let commits_this_month = commits_this_month.clone();
-            use_effect_with((*commits_this_month).clone(), move |latest_commits| {
+            let commits_this_year = commits_this_year.clone();
+            use_effect_with((*commits_this_year).clone(), move |latest_commits| {
                 let mut interval_id = None;
                 let mut callback = None;
                 let latest_commits = latest_commits.clone();

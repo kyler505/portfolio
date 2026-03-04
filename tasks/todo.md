@@ -237,7 +237,7 @@
 - [ ] Verify deployed Render site metric rotation + theme persistence
 
 ### Acceptance Criteria
-- Metric rotation cycles exactly: Wasm heap size, College Station local time, weekday-based energy drinks since 2026-01-12, commits this month.
+- Metric rotation cycles exactly: Wasm heap size, College Station local time, weekday-based energy drinks since 2026-01-12, commits this year.
 - Browser/JS API failures degrade to safe values without panics.
 - Theme toggle keeps working in production and persists across reload.
 - Local release checks pass and changes are pushed to `origin/main`.
