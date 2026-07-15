@@ -283,6 +283,16 @@ a {
   text-decoration: none;
 }
 
+.link.global-shop-link,
+.link.global-shop-link:link,
+.link.global-shop-link:visited,
+.link.global-shop-link:hover,
+.link.global-shop-link:focus-visible,
+.link.global-shop-link:active {
+  color: #58b947;
+  text-decoration: none;
+}
+
 .link::after {
   background: currentColor;
   bottom: -0.02em;
@@ -303,6 +313,10 @@ a {
 
 .link.techhub-link::after {
   background: #500000;
+}
+
+.link.global-shop-link::after {
+  background: #58b947;
 }
 
 .link.techhub-link:hover::after,
@@ -405,6 +419,12 @@ footer {
   width: 100%;
   background: var(--secondary);
   transition: background-color var(--theme-transition-fast) var(--theme-transition-ease);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .hover-preview {
+    display: none;
+  }
 }
 
 @media (max-width: 42rem) {

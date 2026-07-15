@@ -13,10 +13,13 @@ mod frontend {
     use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
     use gloo_timers::callback::Timeout;
-    use js_sys::{Array, ArrayBuffer, Date, Function, JSON, Object, Reflect, WebAssembly};
+    use js_sys::{Array, ArrayBuffer, Date, Function, Object, Reflect, WebAssembly, JSON};
     use wasm_bindgen::{closure::Closure, JsCast};
     use wasm_bindgen_futures::{spawn_local, JsFuture};
-    use web_sys::{window, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent, Request, RequestInit, RequestMode, Response, Storage};
+    use web_sys::{
+        window, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent, Request, RequestInit,
+        RequestMode, Response, Storage,
+    };
     use yew::prelude::*;
 
     const THEME_KEY: &str = "portfolio-theme";
@@ -40,14 +43,18 @@ mod frontend {
     const ENERGY_START_YEAR: i32 = 2026;
     const ENERGY_START_MONTH: u32 = 1;
     const ENERGY_START_DAY: u32 = 12;
-    const PREVIEW_PRELOAD_URLS: [&str; 7] = [
+    const PREVIEW_PRELOAD_URLS: [&str; 11] = [
         PREVIEW_DEFAULT_IMAGE,
+        "/previews/manual/global-shop-solutions.jpg",
         "/previews/manual/techhub.png",
+        "/previews/manual/tamu-campus.jpg",
         "/previews/og/project-shade-og.png",
         "/previews/og/temp-data-pipeline-og.png",
-        "/previews/og/techhub-delivery-platform-og.png",
+        "/previews/og/gradescope-cli-og.png",
+        "/previews/og/local-poker-tracker-og.png",
         GITHUB_LINK_SCREENSHOT,
         "/previews/manual/linkedin.png",
+        "/previews/manual/resume.png",
     ];
 
     #[derive(Clone, Copy, PartialEq)]
@@ -211,10 +218,7 @@ mod frontend {
     fn github_year_date_range() -> (String, String) {
         let year = github_year_parts();
 
-        (
-            format!("{year:04}-01-01"),
-            format!("{year:04}-12-31"),
-        )
+        (format!("{year:04}-01-01"), format!("{year:04}-12-31"))
     }
 
     fn count_total_commits_from_payload(payload: &wasm_bindgen::JsValue) -> Option<u32> {
@@ -332,9 +336,7 @@ mod frontend {
             return Err(());
         }
 
-        let text_promise = response
-            .text()
-            .map_err(|_| ())?;
+        let text_promise = response.text().map_err(|_| ())?;
         let body_text = JsFuture::from(text_promise)
             .await
             .map_err(|_| ())?
@@ -776,6 +778,17 @@ mod frontend {
         normalized.starts_with("http://") || normalized.starts_with("https://")
     }
 
+    fn supports_hover_previews() -> bool {
+        window()
+            .and_then(|win| {
+                win.match_media("(hover: hover) and (pointer: fine)")
+                    .ok()
+                    .flatten()
+            })
+            .map(|media_query| media_query.matches())
+            .unwrap_or(false)
+    }
+
     fn resolve_preview_asset(
         href: &AttrValue,
         label: &AttrValue,
@@ -795,7 +808,10 @@ mod frontend {
         })
     }
 
-    fn display_preview_asset(target: &PreviewAsset, loaded_preview_urls: &HashSet<String>) -> PreviewAsset {
+    fn display_preview_asset(
+        target: &PreviewAsset,
+        loaded_preview_urls: &HashSet<String>,
+    ) -> PreviewAsset {
         if loaded_preview_urls.contains(target.src.as_str()) {
             return target.clone();
         }
@@ -827,6 +843,10 @@ mod frontend {
             let preview = preview.clone();
             let on_pointer_preview = props.on_pointer_preview.clone();
             Callback::from(move |event: MouseEvent| {
+                if !supports_hover_previews() {
+                    return;
+                }
+
                 if let Some(preview_asset) = preview.clone() {
                     on_pointer_preview.emit((preview_asset, event.client_x(), event.client_y()));
                 }
@@ -837,6 +857,10 @@ mod frontend {
             let preview = preview.clone();
             let on_pointer_preview = props.on_pointer_preview.clone();
             Callback::from(move |event: MouseEvent| {
+                if !supports_hover_previews() {
+                    return;
+                }
+
                 if let Some(preview_asset) = preview.clone() {
                     on_pointer_preview.emit((preview_asset, event.client_x(), event.client_y()));
                 }
@@ -852,6 +876,10 @@ mod frontend {
             let preview = preview.clone();
             let on_focus_preview = props.on_focus_preview.clone();
             Callback::from(move |_event: FocusEvent| {
+                if !supports_hover_previews() {
+                    return;
+                }
+
                 if let Some(preview_asset) = preview.clone() {
                     on_focus_preview.emit(preview_asset);
                 }
@@ -886,9 +914,8 @@ mod frontend {
         let theme = use_state(resolve_theme);
         let theme_icon_cycle = use_state(|| 0u32);
         let commits_this_year = use_state(|| AttrValue::from(COMMITS_THIS_YEAR_FALLBACK));
-        let active_metric = use_state(|| {
-            current_metrics(&AttrValue::from(COMMITS_THIS_YEAR_FALLBACK))[0].clone()
-        });
+        let active_metric =
+            use_state(|| current_metrics(&AttrValue::from(COMMITS_THIS_YEAR_FALLBACK))[0].clone());
         let metric_cursor = use_mut_ref(|| 0usize);
         let theme_animation_timeout = use_mut_ref(|| Option::<Timeout>::None);
         let preview_card = use_state(PreviewCardState::hidden);
@@ -899,7 +926,7 @@ mod frontend {
         let pointer_raf_handle = use_mut_ref(|| Option::<i32>::None);
         let pointer_raf_closure = use_mut_ref(|| Option::<Closure<dyn FnMut()>>::None);
         let loaded_preview_urls = use_mut_ref(|| HashSet::<String>::new());
-        let preload_images = use_mut_ref(Vec::<HtmlImageElement>::new);
+        let preload_images = use_mut_ref(Vec::<(HtmlImageElement, Closure<dyn FnMut()>)>::new);
         let active_preview_target = use_state(|| Option::<PreviewAsset>::None);
 
         {
@@ -943,13 +970,15 @@ mod frontend {
                     });
 
                     image.set_onload(Some(onload.as_ref().unchecked_ref()));
-                    onload.forget();
                     image.set_src(url);
-                    preload_images.borrow_mut().push(image);
+                    preload_images.borrow_mut().push((image, onload));
                 }
 
                 let preload_images = preload_images.clone();
                 move || {
+                    for (image, _) in preload_images.borrow().iter() {
+                        image.set_onload(None);
+                    }
                     preload_images.borrow_mut().clear();
                 }
             });
@@ -1247,12 +1276,18 @@ mod frontend {
                 });
 
                 if let Some(win) = win.as_ref() {
-                    win.set_onresize(Some(resize_handler.as_ref().unchecked_ref()));
+                    let _ = win.add_event_listener_with_callback(
+                        "resize",
+                        resize_handler.as_ref().unchecked_ref(),
+                    );
                 }
 
                 move || {
                     if let Some(win) = win {
-                        win.set_onresize(None);
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            resize_handler.as_ref().unchecked_ref(),
+                        );
                     }
                     drop(resize_handler);
                 }
@@ -1294,7 +1329,20 @@ mod frontend {
                         <section aria-labelledby="about-heading" class="section-block">
                             <h2 id="about-heading">{"About"}</h2>
                             <p>
-                                {"Computer Science student at Texas A&M building dependable software for campus operations at "}
+                                {"Product & Engineering Intern at "}
+                                <ExternalLink
+                                    href="https://www.globalshopsolutions.com/"
+                                    label="Global Shop Solutions"
+                                    extra_class={classes!("global-shop-link")}
+                                    preview={PreviewAsset {
+                                        src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
+                                        alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
+                                    }}
+                                    on_pointer_preview={on_pointer_preview.clone()}
+                                    on_focus_preview={on_focus_preview.clone()}
+                                    on_hide_preview={on_hide_preview.clone()}
+                                />
+                                {" and Computer Science student at Texas A&M. I build useful internal tools, data systems, and the occasional ML project at "}
                                 <ExternalLink
                                     href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
                                     label="TechHub"
@@ -1307,8 +1355,72 @@ mod frontend {
                                     on_focus_preview={on_focus_preview.clone()}
                                     on_hide_preview={on_hide_preview.clone()}
                                 />
-                                {" and practical machine learning projects."}
+                                {" — plus a few things of my own."}
                             </p>
+                        </section>
+
+                        <section aria-labelledby="experience-heading" class="section-block">
+                            <h2 id="experience-heading">{"Experience"}</h2>
+                            <div class="app-group">
+                                <ul class="row-list">
+                                    <li>
+                                        <span>{"Product & Engineering Intern"}</span>
+                                        <span class="muted">
+                                            {" — "}
+                                            <ExternalLink
+                                                href="https://www.globalshopsolutions.com/"
+                                                label="Global Shop Solutions"
+                                                extra_class={classes!("global-shop-link")}
+                                                preview={PreviewAsset {
+                                                    src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
+                                                    alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
+                                                }}
+                                                on_pointer_preview={on_pointer_preview.clone()}
+                                                on_focus_preview={on_focus_preview.clone()}
+                                                on_hide_preview={on_hide_preview.clone()}
+                                            />
+                                            {" · AI-assisted COBOL-to-C# test triage and internal React + .NET tooling"}
+                                        </span>
+                                    </li>
+                                    <li>
+                                        <span>{"Internal Tools Developer"}</span>
+                                        <span class="muted">
+                                            {" — "}
+                                            <ExternalLink
+                                                href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
+                                                label="Texas A&M TechHub"
+                                                extra_class={classes!("techhub-link")}
+                                                preview={PreviewAsset {
+                                                    src: AttrValue::from("/previews/manual/techhub.png"),
+                                                    alt: AttrValue::from("TechHub website screenshot"),
+                                                }}
+                                                on_pointer_preview={on_pointer_preview.clone()}
+                                                on_focus_preview={on_focus_preview.clone()}
+                                                on_hide_preview={on_hide_preview.clone()}
+                                            />
+                                            {" · delivery tooling and device lifecycle automation for 1,000+ campus devices"}
+                                        </span>
+                                    </li>
+                                    <li>
+                                        <span>{"Teaching Assistant"}</span>
+                                        <span class="muted">
+                                            {" — "}
+                                            <ExternalLink
+                                                href="https://www.tamu.edu/"
+                                                label="Texas A&M University"
+                                                preview={PreviewAsset {
+                                                    src: AttrValue::from("/previews/manual/tamu-campus.jpg"),
+                                                    alt: AttrValue::from("Texas A&M University campus celebration"),
+                                                }}
+                                                on_pointer_preview={on_pointer_preview.clone()}
+                                                on_focus_preview={on_focus_preview.clone()}
+                                                on_hide_preview={on_hide_preview.clone()}
+                                            />
+                                            {" · Python labs, office hours, and reviews for 120+ students"}
+                                        </span>
+                                    </li>
+                                </ul>
+                            </div>
                         </section>
 
                         <section aria-labelledby="apps-heading" class="section-block">
@@ -1318,18 +1430,8 @@ mod frontend {
                                 <h3>{"Builds"}</h3>
                                 <ul class="row-list">
                                     <li>
-                                        <ExternalLink
-                                            href="https://github.com/NujhatJalil/SHADE-project"
-                                            label="Project SHADE"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/project-shade-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — lstm team for ensemble heat-wave forecasting model"}</span>
+                                        <span>{"WIP"}</span>
+                                        <span class="muted">{" — exploring a safer way to find recurring problems across large codebases and carry fixes through"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
@@ -1343,21 +1445,53 @@ mod frontend {
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — data pipelines for daily temp max prediction"}</span>
+                                        <span class="muted">{" — temperature data pipelines for forecasting and market-based modeling"}</span>
                                     </li>
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505/techhub-dns"
-                                            label="TechHub Delivery Platform"
+                                            href="https://github.com/kyler505/gradescope-cli"
+                                            label="Gradescope CLI"
                                             preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/techhub-delivery-platform-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for TechHub Delivery Platform repository"),
+                                                src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
+                                                alt: AttrValue::from("GitHub project image for Gradescope CLI"),
                                             }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — internal tool built from the ground up with react + flask"}</span>
+                                        <span class="muted">{" — submit assignments and check autograder results from the terminal"}</span>
+                                    </li>
+                                    <li>
+                                        <ExternalLink
+                                            href="https://github.com/kyler505/local-poker-tracker"
+                                            label="Local Poker Tracker"
+                                            preview={PreviewAsset {
+                                                src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
+                                                alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
+                                            }}
+                                            on_pointer_preview={on_pointer_preview.clone()}
+                                            on_focus_preview={on_focus_preview.clone()}
+                                            on_hide_preview={on_hide_preview.clone()}
+                                        />
+                                        <span class="muted">{" — full-stack session, player, and bankroll analytics for home games"}</span>
+                                    </li>
+                                    <li>
+                                        <ExternalLink
+                                            href="https://github.com/NujhatJalil/SHADE-project"
+                                            label="Project SHADE"
+                                            preview={PreviewAsset {
+                                                src: AttrValue::from("/previews/og/project-shade-og.png"),
+                                                alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
+                                            }}
+                                            on_pointer_preview={on_pointer_preview.clone()}
+                                            on_focus_preview={on_focus_preview.clone()}
+                                            on_hide_preview={on_hide_preview.clone()}
+                                        />
+                                        <span class="muted">{" — LSTM component for a heat-wave risk model using SEIR simulations and 10+ years of temperature data"}</span>
+                                    </li>
+                                    <li>
+                                        <span>{"FlightPath"}</span>
+                                        <span class="muted">{" — AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
                                     </li>
                                 </ul>
                             </div>
@@ -1397,23 +1531,41 @@ mod frontend {
                                         <ExternalLink
                                             href="/resume.pdf"
                                             label="Resume"
+                                            preview={PreviewAsset {
+                                                src: AttrValue::from("/previews/manual/resume.png"),
+                                                alt: AttrValue::from("First page of Kyler Cao's resume"),
+                                            }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — updated feb 5 26"}</span>
+                                        <span class="muted">{" — PDF resume"}</span>
+                                    </li>
+                                    <li>
+                                        <a class="link" href="mailto:kylercao18@gmail.com">{"Email"}</a>
+                                        <span class="muted">{" — send me a message"}</span>
                                     </li>
                                 </ul>
                             </div>
                         </section>
 
                         <section aria-labelledby="languages-heading" class="section-block">
-                            <h2 id="languages-heading">{"Languages"}</h2>
+                            <h2 id="languages-heading">{"Technical Skills"}</h2>
                             <ul class="inline-list">
-                                <li><span class="muted">{"Primary"}</span>{"Java, Python, C++, JavaScript, TypeScript"}</li>
-                                <li><span class="muted">{"Database"}</span>{"SQL (PostgreSQL, MySQL)"}</li>
-                                <li><span class="muted">{"Also"}</span>{"C#, HTML, CSS"}</li>
+                                <li><span class="muted">{"Languages"}</span>{"Python, TypeScript/JavaScript, Java, C++, C#, Go, SQL, COBOL"}</li>
+                                <li><span class="muted">{"Frameworks"}</span>{"React, Next.js, .NET, Flask, FastAPI, Node.js, Tailwind CSS, LangGraph"}</li>
+                                <li><span class="muted">{"Platforms"}</span>{"AWS, Linux, Docker, CI/CD, PostgreSQL, MySQL, Redis, TestArchitect"}</li>
+                                <li><span class="muted">{"Libraries"}</span>{"pandas, NumPy, scikit-learn, PyTorch, XGBoost, Matplotlib, pgvector"}</li>
                             </ul>
+                        </section>
+
+                        <section aria-labelledby="education-heading" class="section-block">
+                            <h2 id="education-heading">{"Education"}</h2>
+                            <p>
+                                <span>{"Texas A&M University"}</span>
+                                <br />
+                                <span class="muted">{"B.S. Computer Science · Minor in Business · GPA 3.59/4.00 · Expected May 2027"}</span>
+                            </p>
                         </section>
 
                         <section aria-labelledby="now-heading" class="section-block now-metric">
@@ -1446,12 +1598,14 @@ mod frontend {
     }
 
     pub fn run() {
-        yew::Renderer::<App>::with_root(
-            window()
-                .and_then(|w| w.document())
-                .and_then(|d| d.get_element_by_id("app"))
-                .expect("missing #app mount point"),
-        )
-        .render();
+        let Some(root) = window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("app"))
+        else {
+            web_sys::console::error_1(&"missing #app mount point".into());
+            return;
+        };
+
+        yew::Renderer::<App>::with_root(root).render();
     }
 }
