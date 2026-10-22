@@ -273,15 +273,6 @@ a {
   transition: color var(--theme-transition-fast) var(--theme-transition-ease);
 }
 
-.link.techhub-link,
-.link.techhub-link:link,
-.link.techhub-link:visited,
-.link.techhub-link:hover,
-.link.techhub-link:focus-visible,
-.link.techhub-link:active {
-  color: #500000;
-  text-decoration: none;
-}
 
 .link.global-shop-link,
 .link.global-shop-link:link,
@@ -311,18 +302,11 @@ a {
   transform: scaleX(1);
 }
 
-.link.techhub-link::after {
-  background: #500000;
-}
 
 .link.global-shop-link::after {
   background: #58b947;
 }
 
-.link.techhub-link:hover::after,
-.link.techhub-link:focus-visible::after {
-  background: var(--text-color);
-}
 
 .external-mark {
   font-size: 0.8em;

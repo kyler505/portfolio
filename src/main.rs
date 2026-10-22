@@ -1401,7 +1401,7 @@ mod frontend {
                                             <ExternalLink
                                                 href="https://tamu.mybigcommerce.com/about/"
                                                 label="Texas A&M TechHub"
-                                                extra_class={classes!("techhub-link")}
+                                                extra_class={classes!("global-shop-link")}
                                                 preview={PreviewAsset {
                                                     src: AttrValue::from("/previews/manual/techhub.png"),
                                                     alt: AttrValue::from("TechHub website screenshot"),
@@ -1440,11 +1440,11 @@ mod frontend {
                             <ul class="row-list">
                                 <li>
                                     <span>{"CodeHawk"}</span>
-                                    <span class="muted">{" · Built the core of a tiered GitHub PR review system with a Go API for signed webhook ingestion, diff parsing, Redis Streams job dispatch, and PR publication, plus a Python/LangGraph worker for agentic review orchestration. Implemented durable review lifecycle controls including transactional outbox, immutable archives, idempotency, and retry/dead-letter handling, and documented a reproducible Docker Compose workflow for local verification."}</span>
+                                    <span class="muted">{" · Tiered GitHub PR review system with a Go API and Python/LangGraph review worker"}</span>
                                 </li>
                                 <li>
                                     <span>{"Seer"}</span>
-                                    <span class="muted">{" · Built a multi-crate Rust terminal runtime for coding agents with a ratatui/crossterm TUI, persistent workspace and pane state, and local PTY runtimes. Implemented brokered multi-user sessions with credentialed client attachments, end-to-end encrypted remote connections via iroh, and integration tests for handshakes, forwarding, detach, and runtime lifecycle."}</span>
+                                    <span class="muted">{" · Multi-crate Rust terminal runtime for coding agents with end-to-end encrypted remote sessions over iroh"}</span>
                                 </li>
                                 <li>
                                     <ExternalLink
