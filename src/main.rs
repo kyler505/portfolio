@@ -57,6 +57,12 @@ mod frontend {
         "/previews/manual/resume.png",
     ];
 
+    const INTERESTED_PROJECTS: [(&str, &str, &str); 1] = [(
+        "wayshare",
+        "https://github.com/wesleygrimes/wayshare",
+        "Merged upstream PR #25: encrypted mouse input diagnostics",
+    )];
+
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
         Pointer { client_x: i32, client_y: i32 },
@@ -639,7 +645,7 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "celcius cans crushed this year",
+                label: "Celsius cans crushed this year",
             },
             Metric {
                 value: commits_this_year.clone(),
@@ -1329,7 +1335,7 @@ mod frontend {
                         <section aria-labelledby="about-heading" class="section-block">
                             <h2 id="about-heading">{"About"}</h2>
                             <p>
-                                {"Product & Engineering Intern at "}
+                                {"Associate Software Engineer at "}
                                 <ExternalLink
                                     href="https://www.globalshopsolutions.com/"
                                     label="Global Shop Solutions"
@@ -1342,20 +1348,7 @@ mod frontend {
                                     on_focus_preview={on_focus_preview.clone()}
                                     on_hide_preview={on_hide_preview.clone()}
                                 />
-                                {" and Computer Science student at Texas A&M. I build useful internal tools, data systems, and the occasional ML project at "}
-                                <ExternalLink
-                                    href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
-                                    label="TechHub"
-                                    extra_class={classes!("techhub-link")}
-                                    preview={PreviewAsset {
-                                        src: AttrValue::from("/previews/manual/techhub.png"),
-                                        alt: AttrValue::from("TechHub website screenshot"),
-                                    }}
-                                    on_pointer_preview={on_pointer_preview.clone()}
-                                    on_focus_preview={on_focus_preview.clone()}
-                                    on_hide_preview={on_hide_preview.clone()}
-                                />
-                                {" — plus a few things of my own."}
+                                {" and Computer Science student at Texas A&M. I improve CI/CD pipelines, build internal developer tools, and create useful software."}
                             </p>
                         </section>
 
@@ -1364,9 +1357,28 @@ mod frontend {
                             <div class="app-group">
                                 <ul class="row-list">
                                     <li>
+                                        <span>{"Associate Software Engineer"}</span>
+                                        <span class="muted">
+                                            {" · Aug 2026 to Present · "}
+                                            <ExternalLink
+                                                href="https://www.globalshopsolutions.com/"
+                                                label="Global Shop Solutions"
+                                                extra_class={classes!("global-shop-link")}
+                                                preview={PreviewAsset {
+                                                    src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
+                                                    alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
+                                                }}
+                                                on_pointer_preview={on_pointer_preview.clone()}
+                                                on_focus_preview={on_focus_preview.clone()}
+                                                on_hide_preview={on_hide_preview.clone()}
+                                            />
+                                            {" · Improving CI/CD pipelines and developing production-server features for GSS Cloud; building an internal developer code harness for reusable workflows with company services and tools"}
+                                        </span>
+                                    </li>
+                                    <li>
                                         <span>{"Product & Engineering Intern"}</span>
                                         <span class="muted">
-                                            {" — "}
+                                            {" · May 2026 to Aug 2026 · "}
                                             <ExternalLink
                                                 href="https://www.globalshopsolutions.com/"
                                                 label="Global Shop Solutions"
@@ -1385,9 +1397,9 @@ mod frontend {
                                     <li>
                                         <span>{"Internal Tools Developer"}</span>
                                         <span class="muted">
-                                            {" — "}
+                                            {" · Oct 2025 to May 2026 · "}
                                             <ExternalLink
-                                                href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
+                                                href="https://tamu.mybigcommerce.com/about/"
                                                 label="Texas A&M TechHub"
                                                 extra_class={classes!("techhub-link")}
                                                 preview={PreviewAsset {
@@ -1398,13 +1410,13 @@ mod frontend {
                                                 on_focus_preview={on_focus_preview.clone()}
                                                 on_hide_preview={on_hide_preview.clone()}
                                             />
-                                            {" · delivery tooling and device lifecycle automation for 1,000+ campus devices"}
+                                            {" · Created delivery tooling and device lifecycle automation for a 1,000+ device campus fleet"}
                                         </span>
                                     </li>
                                     <li>
                                         <span>{"Teaching Assistant"}</span>
                                         <span class="muted">
-                                            {" — "}
+                                            {" · Aug 2024 to May 2025 · "}
                                             <ExternalLink
                                                 href="https://www.tamu.edu/"
                                                 label="Texas A&M University"
@@ -1423,141 +1435,137 @@ mod frontend {
                             </div>
                         </section>
 
-                        <section aria-labelledby="apps-heading" class="section-block">
-                            <h2 id="apps-heading">{"Apps"}</h2>
+                        <section aria-labelledby="builds-heading" class="section-block">
+                            <h2 id="builds-heading">{"Builds"}</h2>
+                            <ul class="row-list">
+                                <li>
+                                    <span>{"CodeHawk"}</span>
+                                    <span class="muted">{" · Built the core of a tiered GitHub PR review system with a Go API for signed webhook ingestion, diff parsing, Redis Streams job dispatch, and PR publication, plus a Python/LangGraph worker for agentic review orchestration. Implemented durable review lifecycle controls including transactional outbox, immutable archives, idempotency, and retry/dead-letter handling, and documented a reproducible Docker Compose workflow for local verification."}</span>
+                                </li>
+                                <li>
+                                    <span>{"Seer"}</span>
+                                    <span class="muted">{" · Built a multi-crate Rust terminal runtime for coding agents with a ratatui/crossterm TUI, persistent workspace and pane state, and local PTY runtimes. Implemented brokered multi-user sessions with credentialed client attachments, end-to-end encrypted remote connections via iroh, and integration tests for handshakes, forwarding, detach, and runtime lifecycle."}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/gradescope-cli"
+                                        label="Gradescope CLI"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
+                                            alt: AttrValue::from("GitHub project image for Gradescope CLI"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · submit assignments and check autograder results from the terminal"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/local-poker-tracker"
+                                        label="Local Poker Tracker"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
+                                            alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · full-stack session, player, and bankroll analytics for home games"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/tamuhack25_aa"
+                                        label="FlightPath"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
+                                </li>
+                            </ul>
+                        </section>
 
-                            <div class="app-group">
-                                <h3>{"Builds"}</h3>
-                                <ul class="row-list">
-                                    <li>
-                                        <span>{"WIP"}</span>
-                                        <span class="muted">{" — exploring a safer way to find recurring problems across large codebases and carry fixes through"}</span>
-                                    </li>
+                        <section aria-labelledby="interested-heading" class="section-block">
+                            <h2 id="interested-heading">{"Interested in"}</h2>
+                            <ul class="row-list">
+                                {for INTERESTED_PROJECTS.iter().map(|(name, href, description)| html! {
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505/temp-data-pipeline"
-                                            label="Temp Data Pipeline"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/temp-data-pipeline-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Temp Data Pipeline repository"),
-                                            }}
+                                            href={*href}
+                                            label={*name}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — temperature data pipelines for forecasting and market-based modeling"}</span>
+                                        <span class="muted">{" · "}{*description}</span>
                                     </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505/gradescope-cli"
-                                            label="Gradescope CLI"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
-                                                alt: AttrValue::from("GitHub project image for Gradescope CLI"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — submit assignments and check autograder results from the terminal"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505/local-poker-tracker"
-                                            label="Local Poker Tracker"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — full-stack session, player, and bankroll analytics for home games"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/NujhatJalil/SHADE-project"
-                                            label="Project SHADE"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/project-shade-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — LSTM component for a heat-wave risk model using SEIR simulations and 10+ years of temperature data"}</span>
-                                    </li>
-                                    <li>
-                                        <span>{"FlightPath"}</span>
-                                        <span class="muted">{" — AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
-                                    </li>
-                                </ul>
-                            </div>
+                                })}
+                            </ul>
+                        </section>
 
-                            <div class="app-group">
-                                <h3>{"Links"}</h3>
-                                <ul class="row-list">
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505"
-                                            label="GitHub"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
-                                                alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — code and experiments"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://www.linkedin.com/in/kylercao"
-                                            label="LinkedIn"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/manual/linkedin.png"),
-                                                alt: AttrValue::from("LinkedIn profile screenshot"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — professional profile"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="/resume.pdf"
-                                            label="Resume"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/manual/resume.png"),
-                                                alt: AttrValue::from("First page of Kyler Cao's resume"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — PDF resume"}</span>
-                                    </li>
-                                    <li>
-                                        <a class="link" href="mailto:kylercao18@gmail.com">{"Email"}</a>
-                                        <span class="muted">{" — send me a message"}</span>
-                                    </li>
-                                </ul>
-                            </div>
+                        <section aria-labelledby="links-heading" class="section-block">
+                            <h2 id="links-heading">{"Links"}</h2>
+                            <ul class="row-list">
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505"
+                                        label="GitHub"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
+                                            alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · code and experiments"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://www.linkedin.com/in/kylercao"
+                                        label="LinkedIn"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/linkedin.png"),
+                                            alt: AttrValue::from("LinkedIn profile screenshot"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · professional profile"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="/resume.pdf"
+                                        label="Resume"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/resume.png"),
+                                            alt: AttrValue::from("First page of Kyler Cao's resume"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · PDF resume"}</span>
+                                </li>
+                                <li>
+                                    <a class="link" href="mailto:kylercao18@gmail.com">{"Email"}</a>
+                                    <span class="muted">{" · send me a message"}</span>
+                                </li>
+                            </ul>
                         </section>
 
                         <section aria-labelledby="languages-heading" class="section-block">
                             <h2 id="languages-heading">{"Technical Skills"}</h2>
                             <ul class="inline-list">
-                                <li><span class="muted">{"Languages"}</span>{"Python, TypeScript/JavaScript, Java, C++, C#, Go, SQL, COBOL"}</li>
-                                <li><span class="muted">{"Frameworks"}</span>{"React, Next.js, .NET, Flask, FastAPI, Node.js, Tailwind CSS, LangGraph"}</li>
-                                <li><span class="muted">{"Platforms"}</span>{"AWS, Linux, Docker, CI/CD, PostgreSQL, MySQL, Redis, TestArchitect"}</li>
-                                <li><span class="muted">{"Libraries"}</span>{"pandas, NumPy, scikit-learn, PyTorch, XGBoost, Matplotlib, pgvector"}</li>
+                                <li><span class="muted">{"Languages: "}</span>{"Rust, Python, Go, TypeScript/JavaScript, C#, SQL, Java, C++, COBOL"}</li>
+                                <li><span class="muted">{"Frameworks & Libraries: "}</span>{"React, .NET, Flask, Node.js, LangGraph, ratatui, crossterm, portable-pty, pandas, scikit-learn"}</li>
+                                <li><span class="muted">{"Tools & Platforms: "}</span>{"Git, Docker, Kubernetes, Argo CD, Linux, PostgreSQL, MySQL, Redis, iroh, Slurm"}</li>
                             </ul>
                         </section>
+
 
                         <section aria-labelledby="education-heading" class="section-block">
                             <h2 id="education-heading">{"Education"}</h2>
