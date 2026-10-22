@@ -231,7 +231,7 @@ html {
 }
 
 .section-rail {
-  left: calc(50% - 20rem - 2.5rem);
+  left: 0.75rem;
   position: fixed;
   top: 50%;
   transform: translateY(-50%);
