@@ -17,8 +17,8 @@ mod frontend {
     use wasm_bindgen::{closure::Closure, JsCast};
     use wasm_bindgen_futures::{spawn_local, JsFuture};
     use web_sys::{
-        window, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent, Request, RequestInit,
-        RequestMode, Response, Storage,
+        window, Document, Element, Event, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent,
+        Request, RequestInit, RequestMode, Response, Storage,
     };
     use yew::prelude::*;
 
@@ -915,6 +915,173 @@ mod frontend {
         }
     }
 
+    #[derive(Clone, PartialEq)]
+    struct SectionNavigationItem {
+        id: String,
+        title: String,
+        preview: String,
+    }
+
+    fn collect_section_navigation(
+        document: &Document,
+    ) -> (Vec<SectionNavigationItem>, Vec<Element>) {
+        let Ok(sections) =
+            document.query_selector_all("main > section.section-block[aria-labelledby]")
+        else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let mut navigation_items = Vec::new();
+        let mut observed_sections = Vec::new();
+
+        for index in 0..sections.length() {
+            let Some(section) = sections
+                .item(index)
+                .and_then(|node| node.dyn_into::<Element>().ok())
+            else {
+                continue;
+            };
+            let Some(id) = section.get_attribute("aria-labelledby") else {
+                continue;
+            };
+            let Some(heading) = document.get_element_by_id(&id) else {
+                continue;
+            };
+            let title = heading.text_content().unwrap_or_default().trim().to_owned();
+            if title.is_empty() {
+                continue;
+            }
+
+            let preview = section
+                .query_selector("li, p, .metric-entry")
+                .ok()
+                .flatten()
+                .and_then(|row| row.dyn_into::<HtmlElement>().ok())
+                .map(|row| short_section_preview(&row.inner_text()))
+                .unwrap_or_default();
+
+            navigation_items.push(SectionNavigationItem { id, title, preview });
+            observed_sections.push(section);
+        }
+
+        (navigation_items, observed_sections)
+    }
+
+    fn short_section_preview(text: &str) -> String {
+        let text = text.replace("(opens in a new tab)", "");
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut chars = text.chars();
+        let preview = chars.by_ref().take(88).collect::<String>();
+        if chars.next().is_some() {
+            format!("{preview}…")
+        } else {
+            preview
+        }
+    }
+
+    fn section_at_viewport_center(sections: &[Element]) -> Option<usize> {
+        let center = window()
+            .and_then(|win| win.inner_height().ok())
+            .and_then(|height| height.as_f64())
+            .map(|height| height / 2.0)?;
+
+        sections
+            .iter()
+            .enumerate()
+            .filter(|(_, section)| section.get_bounding_client_rect().top() <= center)
+            .map(|(index, _)| index)
+            .last()
+            .or_else(|| (!sections.is_empty()).then_some(0))
+    }
+
+    #[function_component(SectionRail)]
+    fn section_rail() -> Html {
+        let navigation_items = use_state(Vec::<SectionNavigationItem>::new);
+        let active_section = use_state(|| 0usize);
+
+        {
+            let navigation_items = navigation_items.clone();
+            let active_section = active_section.clone();
+            use_effect_with((), move |_| {
+                let browser_window = window();
+                let document = browser_window.as_ref().and_then(|win| win.document());
+                let (items, sections) = document
+                    .as_ref()
+                    .map(collect_section_navigation)
+                    .unwrap_or_default();
+
+                if let Some(index) = section_at_viewport_center(&sections) {
+                    active_section.set(index);
+                }
+                navigation_items.set(items);
+
+                let active_section_for_scroll = active_section.clone();
+                let scroll_handler = Closure::<dyn FnMut(Event)>::new(move |_| {
+                    if let Some(index) = section_at_viewport_center(&sections) {
+                        if *active_section_for_scroll != index {
+                            active_section_for_scroll.set(index);
+                        }
+                    }
+                });
+
+                if let Some(win) = browser_window.as_ref() {
+                    let handler = scroll_handler.as_ref().unchecked_ref();
+                    let _ = win.add_event_listener_with_callback("scroll", handler);
+                    let _ = win.add_event_listener_with_callback("resize", handler);
+                }
+
+                move || {
+                    if let Some(win) = browser_window.as_ref() {
+                        let handler = scroll_handler.as_ref().unchecked_ref();
+                        let _ = win.remove_event_listener_with_callback("scroll", handler);
+                        let _ = win.remove_event_listener_with_callback("resize", handler);
+                    }
+                    drop(scroll_handler);
+                }
+            });
+        }
+
+        html! {
+            <nav class="section-rail" aria-label="Page sections">
+                <ul class="section-rail-list">
+                    {for navigation_items.iter().enumerate().map(|(index, item)| {
+                        let target_id = item.id.clone();
+                        let active_section_for_click = active_section.clone();
+                        let on_click = Callback::from(move |_| {
+                            active_section_for_click.set(index);
+                            if let Some(target) = window()
+                                .and_then(|win| win.document())
+                                .and_then(|document| document.get_element_by_id(&target_id))
+                            {
+                                target.scroll_into_view();
+                            }
+                        });
+                        let is_active = *active_section == index;
+
+                        html! {
+                            <li>
+                                <button
+                                    class={classes!("section-rail-button", is_active.then_some("is-active"))}
+                                    type="button"
+                                    aria-label={format!("Go to {}. {}", item.title, item.preview)}
+                                    aria-controls={item.id.clone()}
+                                    aria-current={is_active.then_some("location")}
+                                    onclick={on_click}
+                                >
+                                    <span class="section-rail-tick" aria-hidden="true"></span>
+                                    <span class="section-rail-popover" aria-hidden="true">
+                                        <strong>{item.title.clone()}</strong>
+                                        <span>{item.preview.clone()}</span>
+                                    </span>
+                                </button>
+                            </li>
+                        }
+                    })}
+                </ul>
+            </nav>
+        }
+    }
+
     #[function_component(App)]
     fn app() -> Html {
         let theme = use_state(resolve_theme);
@@ -1317,6 +1484,7 @@ mod frontend {
         html! {
             <>
                 <a class="skip-link" href="#content">{"Skip to main content"}</a>
+                <SectionRail />
                 <div class="page-shell">
                     <header class="site-header" aria-labelledby="identity-heading">
                         <h1 id="identity-heading">{"Kyler Cao"}</h1>
