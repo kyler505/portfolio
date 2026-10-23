@@ -17,8 +17,8 @@ mod frontend {
     use wasm_bindgen::{closure::Closure, JsCast};
     use wasm_bindgen_futures::{spawn_local, JsFuture};
     use web_sys::{
-        window, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent, Request, RequestInit,
-        RequestMode, Response, Storage,
+        window, Document, Element, Event, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent,
+        Request, RequestInit, RequestMode, Response, Storage,
     };
     use yew::prelude::*;
 
@@ -56,6 +56,12 @@ mod frontend {
         "/previews/manual/linkedin.png",
         "/previews/manual/resume.png",
     ];
+
+    const INTERESTED_PROJECTS: [(&str, &str, &str); 1] = [(
+        "wayshare",
+        "https://github.com/wesleygrimes/wayshare",
+        "Merged upstream PR #25: encrypted mouse input diagnostics",
+    )];
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -639,7 +645,7 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "celcius cans crushed this year",
+                label: "Celsius cans crushed this year",
             },
             Metric {
                 value: commits_this_year.clone(),
@@ -906,6 +912,173 @@ mod frontend {
                 {props.label.clone()}
                 <span class="sr-only">{" (opens in a new tab)"}</span>
             </a>
+        }
+    }
+
+    #[derive(Clone, PartialEq)]
+    struct SectionNavigationItem {
+        id: String,
+        title: String,
+        preview: String,
+    }
+
+    fn collect_section_navigation(
+        document: &Document,
+    ) -> (Vec<SectionNavigationItem>, Vec<Element>) {
+        let Ok(sections) =
+            document.query_selector_all("main > section.section-block[aria-labelledby]")
+        else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let mut navigation_items = Vec::new();
+        let mut observed_sections = Vec::new();
+
+        for index in 0..sections.length() {
+            let Some(section) = sections
+                .item(index)
+                .and_then(|node| node.dyn_into::<Element>().ok())
+            else {
+                continue;
+            };
+            let Some(id) = section.get_attribute("aria-labelledby") else {
+                continue;
+            };
+            let Some(heading) = document.get_element_by_id(&id) else {
+                continue;
+            };
+            let title = heading.text_content().unwrap_or_default().trim().to_owned();
+            if title.is_empty() {
+                continue;
+            }
+
+            let preview = section
+                .query_selector("li, p, .metric-entry")
+                .ok()
+                .flatten()
+                .and_then(|row| row.dyn_into::<HtmlElement>().ok())
+                .map(|row| short_section_preview(&row.inner_text()))
+                .unwrap_or_default();
+
+            navigation_items.push(SectionNavigationItem { id, title, preview });
+            observed_sections.push(section);
+        }
+
+        (navigation_items, observed_sections)
+    }
+
+    fn short_section_preview(text: &str) -> String {
+        let text = text.replace("(opens in a new tab)", "");
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut chars = text.chars();
+        let preview = chars.by_ref().take(88).collect::<String>();
+        if chars.next().is_some() {
+            format!("{preview}…")
+        } else {
+            preview
+        }
+    }
+
+    fn section_at_viewport_center(sections: &[Element]) -> Option<usize> {
+        let center = window()
+            .and_then(|win| win.inner_height().ok())
+            .and_then(|height| height.as_f64())
+            .map(|height| height / 2.0)?;
+
+        sections
+            .iter()
+            .enumerate()
+            .filter(|(_, section)| section.get_bounding_client_rect().top() <= center)
+            .map(|(index, _)| index)
+            .last()
+            .or_else(|| (!sections.is_empty()).then_some(0))
+    }
+
+    #[function_component(SectionRail)]
+    fn section_rail() -> Html {
+        let navigation_items = use_state(Vec::<SectionNavigationItem>::new);
+        let active_section = use_state(|| 0usize);
+
+        {
+            let navigation_items = navigation_items.clone();
+            let active_section = active_section.clone();
+            use_effect_with((), move |_| {
+                let browser_window = window();
+                let document = browser_window.as_ref().and_then(|win| win.document());
+                let (items, sections) = document
+                    .as_ref()
+                    .map(collect_section_navigation)
+                    .unwrap_or_default();
+
+                if let Some(index) = section_at_viewport_center(&sections) {
+                    active_section.set(index);
+                }
+                navigation_items.set(items);
+
+                let active_section_for_scroll = active_section.clone();
+                let scroll_handler = Closure::<dyn FnMut(Event)>::new(move |_| {
+                    if let Some(index) = section_at_viewport_center(&sections) {
+                        if *active_section_for_scroll != index {
+                            active_section_for_scroll.set(index);
+                        }
+                    }
+                });
+
+                if let Some(win) = browser_window.as_ref() {
+                    let handler = scroll_handler.as_ref().unchecked_ref();
+                    let _ = win.add_event_listener_with_callback("scroll", handler);
+                    let _ = win.add_event_listener_with_callback("resize", handler);
+                }
+
+                move || {
+                    if let Some(win) = browser_window.as_ref() {
+                        let handler = scroll_handler.as_ref().unchecked_ref();
+                        let _ = win.remove_event_listener_with_callback("scroll", handler);
+                        let _ = win.remove_event_listener_with_callback("resize", handler);
+                    }
+                    drop(scroll_handler);
+                }
+            });
+        }
+
+        html! {
+            <nav class="section-rail" aria-label="Page sections">
+                <ul class="section-rail-list">
+                    {for navigation_items.iter().enumerate().map(|(index, item)| {
+                        let target_id = item.id.clone();
+                        let active_section_for_click = active_section.clone();
+                        let on_click = Callback::from(move |_| {
+                            active_section_for_click.set(index);
+                            if let Some(target) = window()
+                                .and_then(|win| win.document())
+                                .and_then(|document| document.get_element_by_id(&target_id))
+                            {
+                                target.scroll_into_view();
+                            }
+                        });
+                        let is_active = *active_section == index;
+
+                        html! {
+                            <li>
+                                <button
+                                    class={classes!("section-rail-button", is_active.then_some("is-active"))}
+                                    type="button"
+                                    aria-label={format!("Go to {}. {}", item.title, item.preview)}
+                                    aria-controls={item.id.clone()}
+                                    aria-current={is_active.then_some("location")}
+                                    onclick={on_click}
+                                >
+                                    <span class="section-rail-tick" aria-hidden="true"></span>
+                                    <span class="section-rail-popover" aria-hidden="true">
+                                        <strong>{item.title.clone()}</strong>
+                                        <span>{item.preview.clone()}</span>
+                                    </span>
+                                </button>
+                            </li>
+                        }
+                    })}
+                </ul>
+            </nav>
         }
     }
 
@@ -1311,6 +1484,7 @@ mod frontend {
         html! {
             <>
                 <a class="skip-link" href="#content">{"Skip to main content"}</a>
+                <SectionRail />
                 <div class="page-shell">
                     <header class="site-header" aria-labelledby="identity-heading">
                         <h1 id="identity-heading">{"Kyler Cao"}</h1>
@@ -1329,7 +1503,7 @@ mod frontend {
                         <section aria-labelledby="about-heading" class="section-block">
                             <h2 id="about-heading">{"About"}</h2>
                             <p>
-                                {"Product & Engineering Intern at "}
+                                {"Associate Software Engineer at "}
                                 <ExternalLink
                                     href="https://www.globalshopsolutions.com/"
                                     label="Global Shop Solutions"
@@ -1342,20 +1516,7 @@ mod frontend {
                                     on_focus_preview={on_focus_preview.clone()}
                                     on_hide_preview={on_hide_preview.clone()}
                                 />
-                                {" and Computer Science student at Texas A&M. I build useful internal tools, data systems, and the occasional ML project at "}
-                                <ExternalLink
-                                    href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
-                                    label="TechHub"
-                                    extra_class={classes!("techhub-link")}
-                                    preview={PreviewAsset {
-                                        src: AttrValue::from("/previews/manual/techhub.png"),
-                                        alt: AttrValue::from("TechHub website screenshot"),
-                                    }}
-                                    on_pointer_preview={on_pointer_preview.clone()}
-                                    on_focus_preview={on_focus_preview.clone()}
-                                    on_hide_preview={on_hide_preview.clone()}
-                                />
-                                {" — plus a few things of my own."}
+                                {" and Computer Science student at Texas A&M. I improve CI/CD pipelines, build internal developer tools, and create useful software."}
                             </p>
                         </section>
 
@@ -1364,9 +1525,28 @@ mod frontend {
                             <div class="app-group">
                                 <ul class="row-list">
                                     <li>
+                                        <span>{"Associate Software Engineer"}</span>
+                                        <span class="muted">
+                                            {" · Aug 2026 to Present · "}
+                                            <ExternalLink
+                                                href="https://www.globalshopsolutions.com/"
+                                                label="Global Shop Solutions"
+                                                extra_class={classes!("global-shop-link")}
+                                                preview={PreviewAsset {
+                                                    src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
+                                                    alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
+                                                }}
+                                                on_pointer_preview={on_pointer_preview.clone()}
+                                                on_focus_preview={on_focus_preview.clone()}
+                                                on_hide_preview={on_hide_preview.clone()}
+                                            />
+                                            {" · Improving CI/CD pipelines and developing production-server features for GSS Cloud; building an internal developer code harness for reusable workflows with company services and tools"}
+                                        </span>
+                                    </li>
+                                    <li>
                                         <span>{"Product & Engineering Intern"}</span>
                                         <span class="muted">
-                                            {" — "}
+                                            {" · May 2026 to Aug 2026 · "}
                                             <ExternalLink
                                                 href="https://www.globalshopsolutions.com/"
                                                 label="Global Shop Solutions"
@@ -1385,11 +1565,11 @@ mod frontend {
                                     <li>
                                         <span>{"Internal Tools Developer"}</span>
                                         <span class="muted">
-                                            {" — "}
+                                            {" · Oct 2025 to May 2026 · "}
                                             <ExternalLink
-                                                href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
+                                                href="https://tamu.mybigcommerce.com/about/"
                                                 label="Texas A&M TechHub"
-                                                extra_class={classes!("techhub-link")}
+                                                extra_class={classes!("global-shop-link")}
                                                 preview={PreviewAsset {
                                                     src: AttrValue::from("/previews/manual/techhub.png"),
                                                     alt: AttrValue::from("TechHub website screenshot"),
@@ -1398,13 +1578,13 @@ mod frontend {
                                                 on_focus_preview={on_focus_preview.clone()}
                                                 on_hide_preview={on_hide_preview.clone()}
                                             />
-                                            {" · delivery tooling and device lifecycle automation for 1,000+ campus devices"}
+                                            {" · Created delivery tooling and device lifecycle automation for a 1,000+ device campus fleet"}
                                         </span>
                                     </li>
                                     <li>
                                         <span>{"Teaching Assistant"}</span>
                                         <span class="muted">
-                                            {" — "}
+                                            {" · Aug 2024 to May 2025 · "}
                                             <ExternalLink
                                                 href="https://www.tamu.edu/"
                                                 label="Texas A&M University"
@@ -1423,141 +1603,137 @@ mod frontend {
                             </div>
                         </section>
 
-                        <section aria-labelledby="apps-heading" class="section-block">
-                            <h2 id="apps-heading">{"Apps"}</h2>
+                        <section aria-labelledby="builds-heading" class="section-block">
+                            <h2 id="builds-heading">{"Builds"}</h2>
+                            <ul class="row-list">
+                                <li>
+                                    <span>{"CodeHawk"}</span>
+                                    <span class="muted">{" · Tiered GitHub PR review system with a Go API and Python/LangGraph review worker"}</span>
+                                </li>
+                                <li>
+                                    <span>{"Seer"}</span>
+                                    <span class="muted">{" · Multi-crate Rust terminal runtime for coding agents with end-to-end encrypted remote sessions over iroh"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/gradescope-cli"
+                                        label="Gradescope CLI"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
+                                            alt: AttrValue::from("GitHub project image for Gradescope CLI"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · submit assignments and check autograder results from the terminal"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/local-poker-tracker"
+                                        label="Local Poker Tracker"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
+                                            alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · full-stack session, player, and bankroll analytics for home games"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/tamuhack25_aa"
+                                        label="FlightPath"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
+                                </li>
+                            </ul>
+                        </section>
 
-                            <div class="app-group">
-                                <h3>{"Builds"}</h3>
-                                <ul class="row-list">
-                                    <li>
-                                        <span>{"WIP"}</span>
-                                        <span class="muted">{" — exploring a safer way to find recurring problems across large codebases and carry fixes through"}</span>
-                                    </li>
+                        <section aria-labelledby="interested-heading" class="section-block">
+                            <h2 id="interested-heading">{"Interested in"}</h2>
+                            <ul class="row-list">
+                                {for INTERESTED_PROJECTS.iter().map(|(name, href, description)| html! {
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505/temp-data-pipeline"
-                                            label="Temp Data Pipeline"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/temp-data-pipeline-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Temp Data Pipeline repository"),
-                                            }}
+                                            href={*href}
+                                            label={*name}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — temperature data pipelines for forecasting and market-based modeling"}</span>
+                                        <span class="muted">{" · "}{*description}</span>
                                     </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505/gradescope-cli"
-                                            label="Gradescope CLI"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
-                                                alt: AttrValue::from("GitHub project image for Gradescope CLI"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — submit assignments and check autograder results from the terminal"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505/local-poker-tracker"
-                                            label="Local Poker Tracker"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — full-stack session, player, and bankroll analytics for home games"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/NujhatJalil/SHADE-project"
-                                            label="Project SHADE"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/project-shade-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — LSTM component for a heat-wave risk model using SEIR simulations and 10+ years of temperature data"}</span>
-                                    </li>
-                                    <li>
-                                        <span>{"FlightPath"}</span>
-                                        <span class="muted">{" — AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
-                                    </li>
-                                </ul>
-                            </div>
+                                })}
+                            </ul>
+                        </section>
 
-                            <div class="app-group">
-                                <h3>{"Links"}</h3>
-                                <ul class="row-list">
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505"
-                                            label="GitHub"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
-                                                alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — code and experiments"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://www.linkedin.com/in/kylercao"
-                                            label="LinkedIn"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/manual/linkedin.png"),
-                                                alt: AttrValue::from("LinkedIn profile screenshot"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — professional profile"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="/resume.pdf"
-                                            label="Resume"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/manual/resume.png"),
-                                                alt: AttrValue::from("First page of Kyler Cao's resume"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — PDF resume"}</span>
-                                    </li>
-                                    <li>
-                                        <a class="link" href="mailto:kylercao18@gmail.com">{"Email"}</a>
-                                        <span class="muted">{" — send me a message"}</span>
-                                    </li>
-                                </ul>
-                            </div>
+                        <section aria-labelledby="links-heading" class="section-block">
+                            <h2 id="links-heading">{"Links"}</h2>
+                            <ul class="row-list">
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505"
+                                        label="GitHub"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
+                                            alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · code and experiments"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://www.linkedin.com/in/kylercao"
+                                        label="LinkedIn"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/linkedin.png"),
+                                            alt: AttrValue::from("LinkedIn profile screenshot"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · professional profile"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="/resume.pdf"
+                                        label="Resume"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/resume.png"),
+                                            alt: AttrValue::from("First page of Kyler Cao's resume"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · PDF resume"}</span>
+                                </li>
+                                <li>
+                                    <a class="link" href="mailto:kylercao18@gmail.com">{"Email"}</a>
+                                    <span class="muted">{" · send me a message"}</span>
+                                </li>
+                            </ul>
                         </section>
 
                         <section aria-labelledby="languages-heading" class="section-block">
                             <h2 id="languages-heading">{"Technical Skills"}</h2>
                             <ul class="inline-list">
-                                <li><span class="muted">{"Languages"}</span>{"Python, TypeScript/JavaScript, Java, C++, C#, Go, SQL, COBOL"}</li>
-                                <li><span class="muted">{"Frameworks"}</span>{"React, Next.js, .NET, Flask, FastAPI, Node.js, Tailwind CSS, LangGraph"}</li>
-                                <li><span class="muted">{"Platforms"}</span>{"AWS, Linux, Docker, CI/CD, PostgreSQL, MySQL, Redis, TestArchitect"}</li>
-                                <li><span class="muted">{"Libraries"}</span>{"pandas, NumPy, scikit-learn, PyTorch, XGBoost, Matplotlib, pgvector"}</li>
+                                <li><span class="muted">{"Languages: "}</span>{"Rust, Python, Go, TypeScript/JavaScript, C#, SQL, Java, C++, COBOL"}</li>
+                                <li><span class="muted">{"Frameworks & Libraries: "}</span>{"React, .NET, Flask, Node.js, LangGraph, ratatui, crossterm, portable-pty, pandas, scikit-learn"}</li>
+                                <li><span class="muted">{"Tools & Platforms: "}</span>{"Git, Docker, Kubernetes, Argo CD, Linux, PostgreSQL, MySQL, Redis, iroh, Slurm"}</li>
                             </ul>
                         </section>
+
 
                         <section aria-labelledby="education-heading" class="section-block">
                             <h2 id="education-heading">{"Education"}</h2>
