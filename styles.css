@@ -37,6 +37,14 @@ body {
   padding: 0;
 }
 
+html {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar {
+  display: none;
+}
+
 body {
   background-color: var(--bg);
   color: var(--text);
