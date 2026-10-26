@@ -918,3 +918,98 @@ footer {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* A touch-friendly section picker takes the place of the desktop tick rail. */
+@media (max-width: 42rem), (max-width: 60rem) and (max-height: 34rem) and (pointer: coarse) {
+  .section-rail {
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    border-top: 1px solid var(--border);
+    bottom: 0;
+    display: block;
+    left: 0;
+    right: 0;
+    top: auto;
+    transform: none;
+  }
+
+  .section-rail-list {
+    flex-direction: row;
+    gap: 0.15rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 0.25rem 0.75rem calc(0.25rem + env(safe-area-inset-bottom));
+    scrollbar-width: none;
+  }
+
+  .section-rail-list::-webkit-scrollbar { display: none; }
+  .section-rail-list > li { flex: 0 0 auto; }
+
+  .section-rail-button {
+    color: var(--muted);
+    height: auto;
+    min-height: 44px;
+    padding: 0 0.7rem;
+    width: auto;
+  }
+
+  .section-rail-button.is-active {
+    background: color-mix(in srgb, var(--brand) 12%, var(--bg));
+    color: var(--brand);
+  }
+
+  .section-rail-tick { display: none; }
+
+  .section-rail-popover,
+  .section-rail-button:is(:hover, :focus-visible) .section-rail-popover {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    color: inherit;
+    display: block;
+    left: auto;
+    opacity: 1;
+    overflow: visible;
+    padding: 0;
+    pointer-events: none;
+    position: static;
+    top: auto;
+    transform: none;
+    visibility: visible;
+    width: auto;
+  }
+
+  .section-rail-popover strong { font-size: 0.8rem; }
+  .section-rail-popover > span { display: none; }
+  .theme-toggle { min-height: 44px; min-width: 44px; }
+  .experience-spine-select { min-height: 44px; width: 100%; }
+  .intro-scroll-cue { bottom: 2.5rem; }
+  .experience-pin { padding-bottom: calc(3.5rem + env(safe-area-inset-bottom)); }
+  .experience-section + .section-block {
+    margin-top: calc(clamp(7rem, 18vh, 11rem) - max(0px, (100svh - 28rem) / 2) - 3.5rem - env(safe-area-inset-bottom));
+    bottom: calc(-1 * var(--builds-height, 0px) - clamp(7rem, 18vh, 11rem) + max(0px, (100svh - 28rem) / 2) + 3.5rem + env(safe-area-inset-bottom));
+  }
+  body { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 24rem) {
+  .experience-pin > h2 { margin-bottom: 1rem; }
+  .experience-spine-layout { display: block; min-height: 0; }
+  .experience-year-block { align-items: baseline; display: flex; gap: 0.7rem; margin-bottom: 0.8rem; }
+  .experience-year-block > span { font-size: 1.35rem; }
+  .experience-year-block > p { margin: 0; max-width: none; }
+  .experience-spine > li { padding-bottom: 0.8rem; }
+  .experience-detail p { font-size: 0.8125rem; line-height: 1.5; }
+}
+
+/* Keep the pinned timeline readable when a phone is held sideways. */
+@media (max-width: 60rem) and (max-height: 34rem) and (pointer: coarse) {
+  .experience-pin > h2 { margin-bottom: 0.65rem; }
+  .experience-spine-layout { gap: 1rem; grid-template-columns: 4.5rem minmax(0, 1fr); min-height: 0; }
+  .experience-year-block > span { font-size: 2rem; }
+  .experience-year-block > p { margin-top: 0.3rem; }
+  .experience-spine > li { padding-bottom: 0.55rem; padding-left: 1rem; }
+  .experience-spine-role { font-size: 0.8125rem; }
+  .experience-spine-select { min-height: 0; }
+  .experience-detail .link { margin: 0.3rem 0 0.15rem; }
+  .experience-detail p { font-size: 0.75rem; line-height: 1.35; }
+}

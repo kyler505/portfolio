@@ -154,6 +154,8 @@ mod frontend {
     const PREVIEW_LOADING_ALT: &str = "Preview loading";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
+    const MOBILE_NAV_QUERY: &str =
+        "(max-width: 42rem), (max-width: 60rem) and (max-height: 34rem) and (pointer: coarse)";
     const COMMITS_THIS_YEAR_FALLBACK: &str = "12";
     const COMMITS_CACHE_KEY_PREFIX: &str = "portfolio-commits-this-year-cache";
     const COMMITS_CACHE_MAX_AGE_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
@@ -1226,12 +1228,19 @@ mod frontend {
         } else {
             rect.top()
         };
+        let mobile = win
+            .match_media(MOBILE_NAV_QUERY)
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches());
         let options = ScrollToOptions::new();
         options.set_top(
             win.scroll_y().unwrap_or_default()
                 + section_top
                 + if section.matches(".experience-section").unwrap_or(false) {
                     0.0
+                } else if mobile && rect.height() > height - 96.0 {
+                    -16.0
                 } else {
                     (rect.height() - height) / 2.0
                 },
@@ -1248,6 +1257,42 @@ mod frontend {
     fn section_rail() -> Html {
         let navigation_items = use_state(Vec::<SectionNavigationItem>::new);
         let active_section = use_state_eq(|| 0usize);
+        {
+            let active_index = *active_section;
+            use_effect_with(active_index, move |index| {
+                if let Some(win) = window() {
+                    let mobile = win
+                        .match_media(MOBILE_NAV_QUERY)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|query| query.matches());
+                    if mobile {
+                        if let Some(list) = win.document().and_then(|document| {
+                            document.query_selector(".section-rail-list").ok().flatten()
+                        }) {
+                            if let Some(button) = list
+                                .query_selector_all(".section-rail-button")
+                                .ok()
+                                .and_then(|buttons| buttons.item(*index as u32))
+                                .and_then(|node| node.dyn_into::<Element>().ok())
+                            {
+                                let bounds = list.get_bounding_client_rect();
+                                let item = button.get_bounding_client_rect();
+                                let offset = if item.left() < bounds.left() + 8.0 {
+                                    (item.left() - bounds.left() - 8.0).floor()
+                                } else if item.right() > bounds.right() - 8.0 {
+                                    (item.right() - bounds.right() + 8.0).ceil()
+                                } else {
+                                    0.0
+                                };
+                                list.set_scroll_left(list.scroll_left() + offset as i32);
+                            }
+                        }
+                    }
+                }
+                || ()
+            });
+        }
         {
             let navigation_items = navigation_items.clone();
             let active_section = active_section.clone();
