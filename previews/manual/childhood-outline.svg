@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1823" height="2747" viewBox="0 0 1280 1928" preserveAspectRatio="none">
+  <title>Manually traced outline of the person on the left</title>
+  <defs>
+    <path id="outline" d="M 571 590
+C 608 586 638 604 653 638
+C 666 664 666 699 655 722
+C 665 720 668 739 660 755
+C 656 769 648 777 641 782
+L 640 833
+C 661 845 696 862 716 883
+C 737 901 739 922 742 953
+C 746 989 750 1029 751 1066
+C 749 1102 751 1144 749 1177
+C 750 1210 762 1251 767 1286
+C 770 1305 773 1325 771 1338
+C 751 1337 732 1324 716 1311
+C 710 1344 705 1376 703 1410
+C 698 1469 692 1519 691 1574
+C 689 1649 684 1710 681 1770
+L 679 1814
+C 685 1830 691 1855 699 1876
+C 709 1897 698 1908 681 1915
+C 648 1924 607 1918 575 1907
+L 562 1897
+C 549 1911 520 1918 494 1915
+C 475 1914 451 1909 442 1900
+C 432 1890 445 1861 452 1844
+L 460 1800
+C 456 1761 457 1720 455 1674
+C 454 1608 449 1545 448 1494
+L 439 1413
+L 430 1384
+C 424 1395 415 1401 407 1394
+L 400 1360
+C 386 1367 365 1368 347 1360
+C 338 1352 339 1331 339 1313
+C 338 1275 337 1239 337 1201
+C 334 1162 336 1121 341 1081
+C 347 1031 360 977 372 938
+C 379 914 387 889 405 875
+C 426 861 461 853 498 837
+L 502 790
+C 488 785 480 775 478 763
+C 469 759 468 741 476 732
+L 484 728
+C 475 700 478 662 489 639
+C 506 608 536 593 571 590 Z" />
+    <filter id="glow" x="-20%" y="-10%" width="140%" height="120%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="6" />
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <use href="#outline" stroke="#2dd4bf" stroke-width="13" opacity=".65" filter="url(#glow)" />
+    <use href="#outline" stroke="#2dd4bf" stroke-width="5" />
+    <use href="#outline" stroke="#d1fff5" stroke-width="1.4" />
+  </g>
+</svg>
