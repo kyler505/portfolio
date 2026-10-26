@@ -12,15 +12,134 @@ fn main() {
 mod frontend {
     use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
-    use gloo_timers::callback::Timeout;
-    use js_sys::{Array, ArrayBuffer, Date, Function, Object, Reflect, WebAssembly, JSON};
-    use wasm_bindgen::{closure::Closure, JsCast};
+    use js_sys::{Array, ArrayBuffer, Date, Function, Object, Promise, Reflect, WebAssembly, JSON};
+    use wasm_bindgen::{closure::Closure, JsCast, JsValue};
     use wasm_bindgen_futures::{spawn_local, JsFuture};
     use web_sys::{
-        window, FocusEvent, HtmlElement, HtmlImageElement, MouseEvent, Request, RequestInit,
-        RequestMode, Response, Storage,
+        window, Document, Element, Event, FocusEvent, HtmlElement, HtmlImageElement, KeyboardEvent,
+        MouseEvent, Request, RequestInit, RequestMode, Response, ScrollBehavior, ScrollToOptions,
+        Storage,
     };
     use yew::prelude::*;
+
+    const SKILL_GROUPS: &[(&str, &[&str])] = &[
+        (
+            "Languages",
+            &[
+                "Rust",
+                "Python",
+                "Go",
+                "TypeScript/JavaScript",
+                "C#",
+                "SQL",
+                "Java",
+                "C++",
+                "COBOL",
+            ],
+        ),
+        (
+            "Frameworks & Libraries",
+            &[
+                "React",
+                ".NET",
+                "Flask",
+                "Node.js",
+                "LangGraph",
+                "ratatui",
+                "crossterm",
+                "portable-pty",
+                "pandas",
+                "scikit-learn",
+            ],
+        ),
+        (
+            "Tools & Platforms",
+            &[
+                "Git",
+                "Docker",
+                "Kubernetes",
+                "Argo CD",
+                "Linux",
+                "PostgreSQL",
+                "MySQL",
+                "Redis",
+                "iroh",
+                "Slurm",
+            ],
+        ),
+    ];
+
+    const LINK_PANES: &[(&str, &str, &str, Option<&str>)] = &[
+        (
+            "GitHub",
+            "https://github.com/kyler505",
+            "code and experiments",
+            Some(GITHUB_LINK_SCREENSHOT),
+        ),
+        (
+            "LinkedIn",
+            "https://www.linkedin.com/in/kylercao",
+            "professional profile",
+            Some("/previews/manual/linkedin.png"),
+        ),
+        (
+            "Resume",
+            "/resume.pdf",
+            "PDF resume",
+            Some("/previews/manual/resume.png"),
+        ),
+        (
+            "Email",
+            "mailto:kylercao18@gmail.com",
+            "send me a message",
+            Some("/previews/manual/email.svg"),
+        ),
+    ];
+
+    fn skill_icon(skill: &str) -> Html {
+        if skill == "TypeScript/JavaScript" {
+            return html! {
+                <span class="skill-logos" aria-hidden="true">
+                    <img src="/previews/icons/typescript.svg" alt="" width="16" height="16" />
+                    <img src="/previews/icons/javascript.svg" alt="" width="16" height="16" />
+                </span>
+            };
+        }
+        let slug = match skill {
+            "Rust" => "rust",
+            "Python" => "python",
+            "Go" => "go",
+            "C#" => "csharp",
+            "SQL" => "database",
+            "Java" => "java",
+            "C++" => "cplusplus",
+            "COBOL" => "code",
+            "React" => "react",
+            ".NET" => "dotnetcore",
+            "Flask" => "flask",
+            "Node.js" => "nodejs",
+            "LangGraph" => "langgraph",
+            "ratatui" | "crossterm" | "portable-pty" => "terminal",
+            "pandas" => "pandas",
+            "scikit-learn" => "scikitlearn",
+            "Git" => "git",
+            "Docker" => "docker",
+            "Kubernetes" => "kubernetes",
+            "Argo CD" => "argocd",
+            "Linux" => "linux",
+            "PostgreSQL" => "postgresql",
+            "MySQL" => "mysql",
+            "Redis" => "redis",
+            "iroh" => "network",
+            "Slurm" => "cluster",
+            _ => "code",
+        };
+        html! {
+            <span class="skill-logos" aria-hidden="true">
+                <img src={format!("/previews/icons/{slug}.svg")} alt="" width="16" height="16" />
+            </span>
+        }
+    }
 
     const THEME_KEY: &str = "portfolio-theme";
     const PREVIEW_GUTTER: f64 = 14.0;
@@ -35,7 +154,6 @@ mod frontend {
     const PREVIEW_LOADING_ALT: &str = "Preview loading";
     const GITHUB_LINK_SCREENSHOT: &str = "/previews/manual/github.png";
     const METRIC_ROTATION_MS: i32 = 3200;
-    const THEME_SWITCH_ANIMATION_MS: u32 = 320;
     const COMMITS_THIS_YEAR_FALLBACK: &str = "12";
     const COMMITS_CACHE_KEY_PREFIX: &str = "portfolio-commits-this-year-cache";
     const COMMITS_CACHE_MAX_AGE_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
@@ -56,6 +174,12 @@ mod frontend {
         "/previews/manual/linkedin.png",
         "/previews/manual/resume.png",
     ];
+
+    const INTERESTED_PROJECTS: [(&str, &str, &str); 1] = [(
+        "wayshare",
+        "https://github.com/wesleygrimes/wayshare",
+        "Merged upstream PR #25: encrypted mouse input diagnostics",
+    )];
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -185,24 +309,72 @@ mod frontend {
         }
     }
 
-    fn trigger_theme_animation(timeout_handle: &Rc<RefCell<Option<Timeout>>>) {
-        let Some(document) = window().and_then(|win| win.document()) else {
+    fn transition_theme(update: Callback<()>, running: Rc<RefCell<bool>>) {
+        let Some(win) = window() else {
+            update.emit(());
             return;
         };
-
-        let Some(root) = document.document_element() else {
-            return;
-        };
-
-        timeout_handle.borrow_mut().take();
-        let _ = root.remove_attribute("data-theme-switching");
-        let _ = root.client_width();
-        let _ = root.set_attribute("data-theme-switching", "true");
-        let root_for_timeout = root.clone();
-        let clear_animation = Timeout::new(THEME_SWITCH_ANIMATION_MS, move || {
-            let _ = root_for_timeout.remove_attribute("data-theme-switching");
+        let reduced_motion = win
+            .match_media("(prefers-reduced-motion: reduce)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches());
+        let document = win.document();
+        // View Transitions is feature-detected without requiring unstable web-sys bindings.
+        let start_transition = document.as_ref().and_then(|document| {
+            Reflect::get(document.as_ref(), &JsValue::from_str("startViewTransition"))
+                .ok()
+                .and_then(|value| value.dyn_into::<Function>().ok())
         });
-        *timeout_handle.borrow_mut() = Some(clear_animation);
+        let root = document.as_ref().and_then(Document::document_element);
+        let (Some(document), Some(root), Some(start_transition)) =
+            (document, root, start_transition)
+        else {
+            update.emit(());
+            return;
+        };
+        if reduced_motion {
+            update.emit(());
+            return;
+        }
+
+        if let Some(button) = document.query_selector(".theme-toggle").ok().flatten() {
+            let rect = button.get_bounding_client_rect();
+            if let Some(root) = root.dyn_ref::<HtmlElement>() {
+                let _ = root.style().set_property(
+                    "--theme-reveal-origin",
+                    &format!(
+                        "{}px {}px",
+                        rect.left() + rect.width() / 2.0,
+                        rect.top() + rect.height() / 2.0,
+                    ),
+                );
+            }
+        }
+        let _ = root.set_attribute("data-theme-transition", "circle-blur");
+        *running.borrow_mut() = true;
+        let update_for_transition = update.clone();
+        let on_update = Closure::<dyn FnMut()>::new(move || update_for_transition.emit(()));
+        match start_transition.call1(document.as_ref(), on_update.as_ref()) {
+            Ok(transition) => {
+                let finished = Promise::resolve(
+                    &Reflect::get(&transition, &JsValue::from_str("finished"))
+                        .unwrap_or(JsValue::UNDEFINED),
+                );
+                spawn_local(async move {
+                    let _ = JsFuture::from(finished).await;
+                    let _ = root.remove_attribute("data-theme-transition");
+                    *running.borrow_mut() = false;
+                    // Keep the Rust callback alive until the browser completes the transition.
+                    drop(on_update);
+                });
+            }
+            Err(_) => {
+                let _ = root.remove_attribute("data-theme-transition");
+                *running.borrow_mut() = false;
+                update.emit(());
+            }
+        }
     }
 
     fn github_year_parts() -> i32 {
@@ -639,7 +811,7 @@ mod frontend {
             },
             Metric {
                 value: AttrValue::from(weekdays_since_energy_start().to_string()),
-                label: "celcius cans crushed this year",
+                label: "Celsius cans crushed this year",
             },
             Metric {
                 value: commits_this_year.clone(),
@@ -830,6 +1002,8 @@ mod frontend {
         preview: Option<PreviewAsset>,
         #[prop_or_default]
         extra_class: Classes,
+        #[prop_or_default]
+        tabindex: Option<AttrValue>,
         on_pointer_preview: Callback<(PreviewAsset, i32, i32)>,
         on_focus_preview: Callback<PreviewAsset>,
         on_hide_preview: Callback<()>,
@@ -894,6 +1068,7 @@ mod frontend {
         html! {
             <a
                 class={classes!("link", props.extra_class.clone())}
+                tabindex={props.tabindex.clone()}
                 href={props.href.clone()}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -909,6 +1084,493 @@ mod frontend {
         }
     }
 
+    #[derive(Clone, PartialEq)]
+    struct SectionNavigationItem {
+        id: String,
+        title: String,
+        preview: String,
+    }
+
+    fn collect_section_navigation(
+        document: &Document,
+    ) -> (Vec<SectionNavigationItem>, Vec<Element>) {
+        let Ok(sections) =
+            document.query_selector_all("main section.section-block[aria-labelledby]")
+        else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let mut navigation_items = Vec::new();
+        let mut observed_sections = Vec::new();
+
+        for index in 0..sections.length() {
+            let Some(section) = sections
+                .item(index)
+                .and_then(|node| node.dyn_into::<Element>().ok())
+            else {
+                continue;
+            };
+            let Some(id) = section.get_attribute("aria-labelledby") else {
+                continue;
+            };
+            let Some(heading) = document.get_element_by_id(&id) else {
+                continue;
+            };
+            let title = heading.text_content().unwrap_or_default().trim().to_owned();
+            if title.is_empty() {
+                continue;
+            }
+
+            let preview = section
+                .query_selector("li, p, .metric-entry")
+                .ok()
+                .flatten()
+                .and_then(|row| row.dyn_into::<HtmlElement>().ok())
+                .map(|row| {
+                    let text = row.inner_text();
+                    if text.is_empty() {
+                        short_section_preview(&row.text_content().unwrap_or_default())
+                    } else {
+                        short_section_preview(&text)
+                    }
+                })
+                .unwrap_or_default();
+
+            navigation_items.push(SectionNavigationItem { id, title, preview });
+            observed_sections.push(section);
+        }
+
+        (navigation_items, observed_sections)
+    }
+
+    fn short_section_preview(text: &str) -> String {
+        let text = text.replace("(opens in a new tab)", "");
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut chars = text.chars();
+        let preview = chars.by_ref().take(88).collect::<String>();
+        if chars.next().is_some() {
+            format!("{preview}…")
+        } else {
+            preview
+        }
+    }
+
+    fn section_at_viewport_center(sections: &[Element]) -> Option<usize> {
+        let center = window()
+            .and_then(|win| win.inner_height().ok())
+            .and_then(|height| height.as_f64())
+            .map(|height| height / 2.0)?;
+
+        if window()
+            .and_then(|win| win.scroll_y().ok())
+            .unwrap_or_default()
+            <= 0.0
+        {
+            return (!sections.is_empty()).then_some(0);
+        }
+
+        if let Some(index) = sections.iter().position(|section| {
+            let rect = section.get_bounding_client_rect();
+            rect.top() <= center && rect.bottom() >= center
+        }) {
+            return Some(index);
+        }
+
+        sections
+            .iter()
+            .enumerate()
+            .map(|(index, section)| {
+                let rect = section.get_bounding_client_rect();
+                (index, (rect.top() + rect.height() / 2.0 - center).abs())
+            })
+            .min_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(index, _)| index)
+    }
+
+    fn highlight_section(sections: &[Element], active_index: usize) {
+        for (index, section) in sections.iter().enumerate() {
+            if index == active_index {
+                let _ = section.set_attribute("data-focused", "");
+            } else {
+                let _ = section.remove_attribute("data-focused");
+            }
+        }
+    }
+
+    fn center_section(heading_id: &str) {
+        let Some(win) = window() else { return };
+        let Some(document) = win.document() else {
+            return;
+        };
+        let Some(section) = document
+            .get_element_by_id(heading_id)
+            .and_then(|heading| heading.closest(".section-block").ok().flatten())
+        else {
+            return;
+        };
+
+        let rect = section.get_bounding_client_rect();
+        let Some(height) = win.inner_height().ok().and_then(|height| height.as_f64()) else {
+            return;
+        };
+        let reduced_motion = win
+            .match_media("(prefers-reduced-motion: reduce)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches());
+        let section_top = if heading_id == "builds-heading" {
+            section
+                .parent_element()
+                .map(|group| group.get_bounding_client_rect().bottom() - rect.height())
+                .unwrap_or(rect.top())
+        } else {
+            rect.top()
+        };
+        let options = ScrollToOptions::new();
+        options.set_top(
+            win.scroll_y().unwrap_or_default()
+                + section_top
+                + if section.matches(".experience-section").unwrap_or(false) {
+                    0.0
+                } else {
+                    (rect.height() - height) / 2.0
+                },
+        );
+        options.set_behavior(if reduced_motion {
+            ScrollBehavior::Instant
+        } else {
+            ScrollBehavior::Smooth
+        });
+        win.scroll_to_with_scroll_to_options(&options);
+    }
+
+    #[function_component(SectionRail)]
+    fn section_rail() -> Html {
+        let navigation_items = use_state(Vec::<SectionNavigationItem>::new);
+        let active_section = use_state_eq(|| 0usize);
+        {
+            let navigation_items = navigation_items.clone();
+            let active_section = active_section.clone();
+            use_effect_with((), move |_| {
+                let browser_window = window();
+                let document = browser_window.as_ref().and_then(|win| win.document());
+                let (items, sections) = document
+                    .as_ref()
+                    .map(collect_section_navigation)
+                    .unwrap_or_default();
+
+                if let Some(index) = section_at_viewport_center(&sections) {
+                    active_section.set(index);
+                    highlight_section(&sections, index);
+                }
+                navigation_items.set(items);
+                let mut previous_index = section_at_viewport_center(&sections);
+                let cue = document
+                    .as_ref()
+                    .and_then(|document| {
+                        document.query_selector(".intro-scroll-cue").ok().flatten()
+                    })
+                    .and_then(|cue| cue.dyn_into::<HtmlElement>().ok());
+                let update_cue = move || {
+                    if let (Some(win), Some(cue)) = (window(), cue.as_ref()) {
+                        let opacity =
+                            (1.0 - win.scroll_y().unwrap_or_default() / 120.0).clamp(0.0, 1.0);
+                        let _ = cue
+                            .style()
+                            .set_property("--cue-opacity", &opacity.to_string());
+                    }
+                };
+                update_cue();
+
+                let active_section_for_scroll = active_section.clone();
+                let scroll_handler = Closure::<dyn FnMut(Event)>::new(move |_| {
+                    update_cue();
+                    if let Some(index) = section_at_viewport_center(&sections) {
+                        if previous_index != Some(index) {
+                            highlight_section(&sections, index);
+                            active_section_for_scroll.set(index);
+                            previous_index = Some(index);
+                        }
+                    }
+                });
+
+                if let Some(win) = browser_window.as_ref() {
+                    let handler = scroll_handler.as_ref().unchecked_ref();
+                    let _ = win.add_event_listener_with_callback("scroll", handler);
+                    let _ = win.add_event_listener_with_callback("resize", handler);
+                }
+
+                move || {
+                    if let Some(win) = browser_window.as_ref() {
+                        let handler = scroll_handler.as_ref().unchecked_ref();
+                        let _ = win.remove_event_listener_with_callback("scroll", handler);
+                        let _ = win.remove_event_listener_with_callback("resize", handler);
+                    }
+                    drop(scroll_handler);
+                }
+            });
+        }
+
+        html! {
+            <nav class="section-rail" aria-label="Page sections">
+                <ul class="section-rail-list">
+                    {for navigation_items.iter().enumerate().map(|(index, item)| {
+                        let target_id = item.id.clone();
+                        let on_click = Callback::from(move |_| center_section(&target_id));
+                        let is_active = *active_section == index;
+
+                        html! {
+                            <li>
+                                <button
+                                    class={classes!("section-rail-button", is_active.then_some("is-active"))}
+                                    type="button"
+                                    aria-label={format!("Go to {}. {}", item.title, item.preview)}
+                                    aria-controls={item.id.clone()}
+                                    aria-current={is_active.then_some("location")}
+                                    onclick={on_click}
+                                >
+                                    <span class="section-rail-tick" aria-hidden="true"></span>
+                                    <span class="section-rail-popover" aria-hidden="true">
+                                        <strong>{item.title.clone()}</strong>
+                                        <span>{item.preview.clone()}</span>
+                                    </span>
+                                </button>
+                            </li>
+                        }
+                    })}
+                </ul>
+            </nav>
+        }
+    }
+
+    struct ExperienceEntry {
+        period: &'static str,
+        year: &'static str,
+        role: &'static str,
+        employer: &'static str,
+        href: &'static str,
+        link_class: &'static str,
+        image: &'static str,
+        description: &'static str,
+    }
+
+    const EXPERIENCE: &[ExperienceEntry] = &[
+        ExperienceEntry {
+            period: "Aug 2024 to May 2025", year: "’24", role: "Teaching Assistant",
+            employer: "Texas A&M University", href: "https://www.tamu.edu/", link_class: "",
+            image: "/previews/manual/tamu-campus.jpg",
+            description: "Python labs, office hours, and reviews for 120+ students",
+        },
+        ExperienceEntry {
+            period: "Oct 2025 to May 2026", year: "’25", role: "Internal Tools Developer",
+            employer: "Texas A&M TechHub", href: "https://tamu.mybigcommerce.com/about/", link_class: "tamu-link",
+            image: "/previews/manual/techhub.png",
+            description: "Created delivery tooling and device lifecycle automation for a 1,000+ device campus fleet",
+        },
+        ExperienceEntry {
+            period: "May 2026 to Aug 2026", year: "’26", role: "Product & Engineering Intern",
+            employer: "Global Shop Solutions", href: "https://www.globalshopsolutions.com/", link_class: "global-shop-link",
+            image: "/previews/manual/global-shop-solutions.jpg",
+            description: "AI-assisted COBOL-to-C# test triage and internal React + .NET tooling",
+        },
+        ExperienceEntry {
+            period: "Aug 2026 to Present", year: "’26", role: "Associate Software Engineer",
+            employer: "Global Shop Solutions", href: "https://www.globalshopsolutions.com/", link_class: "global-shop-link",
+            image: "/previews/manual/global-shop-solutions.jpg",
+            description: "Improving CI/CD pipelines and developing production-server features for GSS Cloud; building an internal developer code harness for reusable workflows with company services and tools",
+        },
+    ];
+
+    fn scroll_experience(index: usize) {
+        let Some(win) = window() else { return };
+        let Some(section) = win.document().and_then(|document| {
+            document
+                .query_selector(".experience-section")
+                .ok()
+                .flatten()
+        }) else {
+            return;
+        };
+        let Some(height) = win.inner_height().ok().and_then(|height| height.as_f64()) else {
+            return;
+        };
+        let rect = section.get_bounding_client_rect();
+        let progress = index as f64 / (EXPERIENCE.len() - 1) as f64;
+        let options = ScrollToOptions::new();
+        options.set_top(
+            win.scroll_y().unwrap_or_default()
+                + rect.top()
+                + (rect.height() - height).max(0.0) * progress,
+        );
+        let reduced = win
+            .match_media("(prefers-reduced-motion: reduce)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches());
+        options.set_behavior(if reduced {
+            ScrollBehavior::Instant
+        } else {
+            ScrollBehavior::Smooth
+        });
+        win.scroll_to_with_scroll_to_options(&options);
+    }
+
+    #[derive(Properties, PartialEq)]
+    struct ExperienceTimelineProps {
+        on_pointer_preview: Callback<(PreviewAsset, i32, i32)>,
+        on_focus_preview: Callback<PreviewAsset>,
+        on_hide_preview: Callback<()>,
+    }
+
+    #[function_component(ExperienceTimeline)]
+    fn experience_timeline(props: &ExperienceTimelineProps) -> Html {
+        let active = use_state_eq(|| 0usize);
+        {
+            let active = active.clone();
+            use_effect_with((), move |()| {
+                let win = window();
+                let section = win
+                    .as_ref()
+                    .and_then(|win| win.document())
+                    .and_then(|document| {
+                        document
+                            .query_selector(".experience-section")
+                            .ok()
+                            .flatten()
+                    });
+                let builds = section
+                    .as_ref()
+                    .and_then(|section| section.next_element_sibling())
+                    .and_then(|section| section.dyn_into::<HtmlElement>().ok());
+                let visible_builds = builds.clone();
+                let size_builds = Rc::new(move || {
+                    if let Some(builds) = builds.as_ref() {
+                        let _ = builds.style().set_property(
+                            "--builds-height",
+                            &format!("{}px", builds.get_bounding_client_rect().height()),
+                        );
+                    }
+                });
+                size_builds();
+                let update = Rc::new(move || {
+                    if let (Some(win), Some(section)) = (window(), section.as_ref()) {
+                        if let Some(height) =
+                            win.inner_height().ok().and_then(|height| height.as_f64())
+                        {
+                            let rect = section.get_bounding_client_rect();
+                            let range = (rect.height() - height).max(1.0);
+                            if let Some(builds) = visible_builds.as_ref() {
+                                // Scroll positions can land a fraction of a pixel before the pin.
+                                if rect.top() <= 1.0 {
+                                    if !builds.has_attribute("data-timeline-visible") {
+                                        let _ = builds.set_attribute("data-timeline-visible", "");
+                                    }
+                                } else if builds.has_attribute("data-timeline-visible") {
+                                    let _ = builds.remove_attribute("data-timeline-visible");
+                                }
+                            }
+                            active.set(
+                                ((-rect.top() / range).clamp(0.0, 1.0)
+                                    * (EXPERIENCE.len() - 1) as f64)
+                                    .round() as usize,
+                            );
+                        }
+                    }
+                });
+                update();
+                let scroll = Closure::<dyn FnMut(Event)>::new(move |_| update());
+                let resize = Closure::<dyn FnMut(Event)>::new(move |_| size_builds());
+                if let Some(win) = &win {
+                    for event in ["scroll", "resize"] {
+                        let _ = win.add_event_listener_with_callback(
+                            event,
+                            scroll.as_ref().unchecked_ref(),
+                        );
+                    }
+                    let _ = win.add_event_listener_with_callback(
+                        "resize",
+                        resize.as_ref().unchecked_ref(),
+                    );
+                }
+                move || {
+                    if let Some(win) = win {
+                        for event in ["scroll", "resize"] {
+                            let _ = win.remove_event_listener_with_callback(
+                                event,
+                                scroll.as_ref().unchecked_ref(),
+                            );
+                        }
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            resize.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            });
+        }
+        let active = *active;
+        let onkeydown = Callback::from(move |event: KeyboardEvent| {
+            let index = match event.key().as_str() {
+                "ArrowUp" | "ArrowLeft" => active.saturating_sub(1),
+                "ArrowDown" | "ArrowRight" => (active + 1).min(EXPERIENCE.len() - 1),
+                "Home" => 0,
+                "End" => EXPERIENCE.len() - 1,
+                _ => return,
+            };
+            // At either end, let the browser's normal vertical scrolling continue.
+            if index == active
+                && matches!(
+                    event.key().as_str(),
+                    "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"
+                )
+            {
+                return;
+            }
+            event.prevent_default();
+            scroll_experience(index);
+        });
+        let current = &EXPERIENCE[EXPERIENCE.len() - 1 - active];
+        html! {
+            <div class="experience-spine-layout" role="region" aria-label="Experience timeline" {onkeydown}>
+                <div class="experience-year-block" aria-hidden="true">
+                    <span>{current.year.replace('’', "20")}</span>
+                    <p>{current.period}</p>
+                </div>
+                <ol class="experience-spine">
+                    {for EXPERIENCE.iter().rev().enumerate().map(|(index, entry)| {
+                        let is_active = active == index;
+                        let onclick = Callback::from(move |_| scroll_experience(index));
+                        let detail_id = format!("experience-detail-{index}");
+                        html! {
+                            <li class={classes!(is_active.then_some("is-active"))}>
+                                <h3>
+                                    <button type="button" class="experience-spine-select" {onclick}
+                                        aria-current={is_active.then_some("step")}
+                                        aria-expanded={is_active.to_string()}
+                                        aria-controls={detail_id.clone()}>
+                                        <span class="experience-spine-role">{entry.role}</span>
+                                        <span class="experience-spine-date">{entry.period}</span>
+                                    </button>
+                                </h3>
+                                <div class="experience-detail" id={detail_id} aria-hidden={(!is_active).to_string()}>
+                                    <div>
+                                        <ExternalLink href={entry.href} label={entry.employer} extra_class={classes!(entry.link_class)}
+                                            tabindex={Some(AttrValue::from(if is_active { "0" } else { "-1" }))}
+                                            preview={PreviewAsset { src: entry.image.into(), alt: format!("{} preview", entry.employer).into() }}
+                                            on_pointer_preview={props.on_pointer_preview.clone()}
+                                            on_focus_preview={props.on_focus_preview.clone()}
+                                            on_hide_preview={props.on_hide_preview.clone()} />
+                                        <p>{entry.description}</p>
+                                    </div>
+                                </div>
+                            </li>
+                        }
+                    })}
+                </ol>
+            </div>
+        }
+    }
+
     #[function_component(App)]
     fn app() -> Html {
         let theme = use_state(resolve_theme);
@@ -917,7 +1579,7 @@ mod frontend {
         let active_metric =
             use_state(|| current_metrics(&AttrValue::from(COMMITS_THIS_YEAR_FALLBACK))[0].clone());
         let metric_cursor = use_mut_ref(|| 0usize);
-        let theme_animation_timeout = use_mut_ref(|| Option::<Timeout>::None);
+        let theme_transition_running = use_mut_ref(|| false);
         let preview_card = use_state(PreviewCardState::hidden);
         let preview_anchor = use_state(|| Option::<PreviewAnchor>::None);
         let preview_card_ref = use_node_ref();
@@ -995,14 +1657,21 @@ mod frontend {
         let on_toggle = {
             let theme = theme.clone();
             let theme_icon_cycle = theme_icon_cycle.clone();
-            let theme_animation_timeout = theme_animation_timeout.clone();
+            let theme_transition_running = theme_transition_running.clone();
             Callback::from(move |_| {
+                if *theme_transition_running.borrow() {
+                    return;
+                }
                 let next = (*theme).toggled();
                 persist_theme(next);
-                apply_theme(next);
-                trigger_theme_animation(&theme_animation_timeout);
-                theme.set(next);
-                theme_icon_cycle.set((*theme_icon_cycle).wrapping_add(1));
+                let theme = theme.clone();
+                let theme_icon_cycle = theme_icon_cycle.clone();
+                let update = Callback::from(move |()| {
+                    apply_theme(next);
+                    theme.set(next);
+                    theme_icon_cycle.set((*theme_icon_cycle).wrapping_add(1));
+                });
+                transition_theme(update, theme_transition_running.clone());
             })
         };
 
@@ -1311,253 +1980,222 @@ mod frontend {
         html! {
             <>
                 <a class="skip-link" href="#content">{"Skip to main content"}</a>
+                <SectionRail />
                 <div class="page-shell">
-                    <header class="site-header" aria-labelledby="identity-heading">
-                        <h1 id="identity-heading">{"Kyler Cao"}</h1>
-                        <button
-                            class="theme-toggle"
-                            type="button"
-                            aria-label={(*theme).toggle_label()}
-                            aria-pressed={(*theme).pressed().to_string()}
-                            onclick={on_toggle}
-                        >
-                            <span key={theme_icon_key} class="theme-toggle-icon" aria-hidden="true">{theme_toggle_icon(*theme)}</span>
-                        </button>
-                    </header>
-
-                    <main id="content">
-                        <section aria-labelledby="about-heading" class="section-block">
-                            <h2 id="about-heading">{"About"}</h2>
-                            <p>
-                                {"Product & Engineering Intern at "}
-                                <ExternalLink
-                                    href="https://www.globalshopsolutions.com/"
-                                    label="Global Shop Solutions"
-                                    extra_class={classes!("global-shop-link")}
-                                    preview={PreviewAsset {
-                                        src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
-                                        alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
-                                    }}
-                                    on_pointer_preview={on_pointer_preview.clone()}
-                                    on_focus_preview={on_focus_preview.clone()}
-                                    on_hide_preview={on_hide_preview.clone()}
-                                />
-                                {" and Computer Science student at Texas A&M. I build useful internal tools, data systems, and the occasional ML project at "}
-                                <ExternalLink
-                                    href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
-                                    label="TechHub"
-                                    extra_class={classes!("techhub-link")}
-                                    preview={PreviewAsset {
-                                        src: AttrValue::from("/previews/manual/techhub.png"),
-                                        alt: AttrValue::from("TechHub website screenshot"),
-                                    }}
-                                    on_pointer_preview={on_pointer_preview.clone()}
-                                    on_focus_preview={on_focus_preview.clone()}
-                                    on_hide_preview={on_hide_preview.clone()}
-                                />
-                                {" — plus a few things of my own."}
-                            </p>
+                    <main id="content" data-section-focus="">
+                        <section aria-labelledby="about-heading" class="section-block intro-section">
+                            <div class="intro-layout">
+                                <div class="intro-heading">
+                                    <h1 id="about-heading">{"Kyler Cao"}</h1>
+                                    <button
+                                        class="theme-toggle"
+                                        type="button"
+                                        aria-label={(*theme).toggle_label()}
+                                        aria-pressed={(*theme).pressed().to_string()}
+                                        onclick={on_toggle}
+                                    >
+                                        <span key={theme_icon_key} class="theme-toggle-icon" aria-hidden="true">{theme_toggle_icon(*theme)}</span>
+                                    </button>
+                                </div>
+                                <p>
+                                    {"Associate Software Engineer at "}
+                                    <ExternalLink
+                                        href="https://www.globalshopsolutions.com/"
+                                        label="Global Shop Solutions"
+                                        extra_class={classes!("global-shop-link")}
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
+                                            alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    {" and Computer Science student at "}
+                                    <ExternalLink
+                                        href="https://www.tamu.edu/"
+                                        label="Texas A&M"
+                                        extra_class={classes!("tamu-link")}
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/manual/tamu-campus.jpg"),
+                                            alt: AttrValue::from("Texas A&M University campus celebration"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    {". I improve CI/CD pipelines, build internal developer tools, and create useful software."}
+                                </p>
+                                <div class="intro-photo-frame">
+                                    <img
+                                        class="intro-photo"
+                                        src="/previews/manual/childhood.jpeg"
+                                        alt="Childhood photo by Christmas trees"
+                                        width="176"
+                                        height="176"
+                                    />
+                                    <img
+                                        class="intro-photo-outline"
+                                        src="/previews/manual/childhood-outline.svg"
+                                        alt=""
+                                        aria-hidden="true"
+                                        width="176"
+                                        height="176"
+                                    />
+                                </div>
+                            </div>
+                            <span class="intro-scroll-cue" aria-hidden="true">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                    <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                            </span>
                         </section>
 
-                        <section aria-labelledby="experience-heading" class="section-block">
+                        <div class="experience-builds-group">
+                        <section aria-labelledby="experience-heading" class="section-block experience-section"
+                            style={format!("--experience-scroll-steps:{};", EXPERIENCE.len() - 1)}>
+                            <div class="experience-pin">
                             <h2 id="experience-heading">{"Experience"}</h2>
-                            <div class="app-group">
-                                <ul class="row-list">
-                                    <li>
-                                        <span>{"Product & Engineering Intern"}</span>
-                                        <span class="muted">
-                                            {" — "}
-                                            <ExternalLink
-                                                href="https://www.globalshopsolutions.com/"
-                                                label="Global Shop Solutions"
-                                                extra_class={classes!("global-shop-link")}
-                                                preview={PreviewAsset {
-                                                    src: AttrValue::from("/previews/manual/global-shop-solutions.jpg"),
-                                                    alt: AttrValue::from("Global Shop Solutions ERP software shown on a laptop"),
-                                                }}
-                                                on_pointer_preview={on_pointer_preview.clone()}
-                                                on_focus_preview={on_focus_preview.clone()}
-                                                on_hide_preview={on_hide_preview.clone()}
-                                            />
-                                            {" · AI-assisted COBOL-to-C# test triage and internal React + .NET tooling"}
-                                        </span>
-                                    </li>
-                                    <li>
-                                        <span>{"Internal Tools Developer"}</span>
-                                        <span class="muted">
-                                            {" — "}
-                                            <ExternalLink
-                                                href="https://www.it.tamu.edu/services/services-by-category/desktop-and-mobile-computing/techhub.html"
-                                                label="Texas A&M TechHub"
-                                                extra_class={classes!("techhub-link")}
-                                                preview={PreviewAsset {
-                                                    src: AttrValue::from("/previews/manual/techhub.png"),
-                                                    alt: AttrValue::from("TechHub website screenshot"),
-                                                }}
-                                                on_pointer_preview={on_pointer_preview.clone()}
-                                                on_focus_preview={on_focus_preview.clone()}
-                                                on_hide_preview={on_hide_preview.clone()}
-                                            />
-                                            {" · delivery tooling and device lifecycle automation for 1,000+ campus devices"}
-                                        </span>
-                                    </li>
-                                    <li>
-                                        <span>{"Teaching Assistant"}</span>
-                                        <span class="muted">
-                                            {" — "}
-                                            <ExternalLink
-                                                href="https://www.tamu.edu/"
-                                                label="Texas A&M University"
-                                                preview={PreviewAsset {
-                                                    src: AttrValue::from("/previews/manual/tamu-campus.jpg"),
-                                                    alt: AttrValue::from("Texas A&M University campus celebration"),
-                                                }}
-                                                on_pointer_preview={on_pointer_preview.clone()}
-                                                on_focus_preview={on_focus_preview.clone()}
-                                                on_hide_preview={on_hide_preview.clone()}
-                                            />
-                                            {" · Python labs, office hours, and reviews for 120+ students"}
-                                        </span>
-                                    </li>
-                                </ul>
+                            <ExperienceTimeline
+                                on_pointer_preview={on_pointer_preview.clone()}
+                                on_focus_preview={on_focus_preview.clone()}
+                                on_hide_preview={on_hide_preview.clone()}
+                            />
                             </div>
                         </section>
 
-                        <section aria-labelledby="apps-heading" class="section-block">
-                            <h2 id="apps-heading">{"Apps"}</h2>
+                        <section aria-labelledby="builds-heading" class="section-block">
+                            <h2 id="builds-heading">{"Builds"}</h2>
+                            <ul class="row-list">
+                                <li>
+                                    <span>{"CodeHawk"}</span>
+                                    <span class="muted">{" · Tiered GitHub PR review system with a Go API and Python/LangGraph review worker"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/nethum529/seer"
+                                        label="Seer"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · Multi-crate Rust terminal runtime for coding agents with end-to-end encrypted remote sessions over iroh"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/gradescope-cli"
+                                        label="Gradescope CLI"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
+                                            alt: AttrValue::from("GitHub project image for Gradescope CLI"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · submit assignments and check autograder results from the terminal"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/local-poker-tracker"
+                                        label="Local Poker Tracker"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
+                                            alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
+                                        }}
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · full-stack session, player, and bankroll analytics for home games"}</span>
+                                </li>
+                                <li>
+                                    <ExternalLink
+                                        href="https://github.com/kyler505/tamuhack25_aa"
+                                        label="FlightPath"
+                                        on_pointer_preview={on_pointer_preview.clone()}
+                                        on_focus_preview={on_focus_preview.clone()}
+                                        on_hide_preview={on_hide_preview.clone()}
+                                    />
+                                    <span class="muted">{" · AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
+                                </li>
+                            </ul>
+                        </section>
 
-                            <div class="app-group">
-                                <h3>{"Builds"}</h3>
-                                <ul class="row-list">
-                                    <li>
-                                        <span>{"WIP"}</span>
-                                        <span class="muted">{" — exploring a safer way to find recurring problems across large codebases and carry fixes through"}</span>
-                                    </li>
+                        </div>
+                        <section aria-labelledby="interested-heading" class="section-block">
+                            <h2 id="interested-heading">{"Interested in"}</h2>
+                            <ul class="row-list">
+                                {for INTERESTED_PROJECTS.iter().map(|(name, href, description)| html! {
                                     <li>
                                         <ExternalLink
-                                            href="https://github.com/kyler505/temp-data-pipeline"
-                                            label="Temp Data Pipeline"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/temp-data-pipeline-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Temp Data Pipeline repository"),
-                                            }}
+                                            href={*href}
+                                            label={*name}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
                                         />
-                                        <span class="muted">{" — temperature data pipelines for forecasting and market-based modeling"}</span>
+                                        <span class="muted">{" · "}{*description}</span>
                                     </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505/gradescope-cli"
-                                            label="Gradescope CLI"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
-                                                alt: AttrValue::from("GitHub project image for Gradescope CLI"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — submit assignments and check autograder results from the terminal"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505/local-poker-tracker"
-                                            label="Local Poker Tracker"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — full-stack session, player, and bankroll analytics for home games"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://github.com/NujhatJalil/SHADE-project"
-                                            label="Project SHADE"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/og/project-shade-og.png"),
-                                                alt: AttrValue::from("GitHub Open Graph image for Project SHADE repository"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — LSTM component for a heat-wave risk model using SEIR simulations and 10+ years of temperature data"}</span>
-                                    </li>
-                                    <li>
-                                        <span>{"FlightPath"}</span>
-                                        <span class="muted">{" — AI-powered flight-search engine built at TAMUHack 2025 with Flask, REST APIs, SQL, and pandas"}</span>
-                                    </li>
-                                </ul>
-                            </div>
+                                })}
+                            </ul>
+                        </section>
 
-                            <div class="app-group">
-                                <h3>{"Links"}</h3>
-                                <ul class="row-list">
+                        <section aria-labelledby="links-heading" class="section-block">
+                            <h2 id="links-heading">{"Links"}</h2>
+                            <ul class="link-panes">
+                                {for LINK_PANES.iter().map(|(label, href, description, image)| html! {
                                     <li>
-                                        <ExternalLink
-                                            href="https://github.com/kyler505"
-                                            label="GitHub"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from(GITHUB_LINK_SCREENSHOT),
-                                                alt: AttrValue::from("Screenshot of the kyler505 GitHub profile page"),
+                                        <a class="link-pane" href={*href}
+                                            target={(!href.starts_with("mailto:")).then_some("_blank")}
+                                            rel={(!href.starts_with("mailto:")).then_some("noopener noreferrer")}
+                                        >
+                                            <div class="pane-preview" aria-hidden="true">
+                                                {if let Some(src) = image {
+                                                    html! { <img src={*src} alt="" loading="lazy" /> }
+                                                } else {
+                                                    html! {
+                                                        <div class="pane-email">
+                                                            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                                <rect x="6" y="11" width="36" height="26" rx="4" />
+                                                                <path d="m7 14 17 13 17-13" />
+                                                            </svg>
+                                                            <span>{"kylercao18@gmail.com"}</span>
+                                                        </div>
+                                                    }
+                                                }}
+                                            </div>
+                                            <div class="pane-meta">
+                                                <span class="pane-title">
+                                                    {*label}<span class="pane-arrow" aria-hidden="true">{"↗"}</span>
+                                                </span>
+                                                <span class="muted pane-description">{*description}</span>
+                                            </div>
+                                            {if href.starts_with("mailto:") { Html::default() } else {
+                                                html! { <span class="sr-only">{" (opens in a new tab)"}</span> }
                                             }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — code and experiments"}</span>
+                                        </a>
                                     </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="https://www.linkedin.com/in/kylercao"
-                                            label="LinkedIn"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/manual/linkedin.png"),
-                                                alt: AttrValue::from("LinkedIn profile screenshot"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — professional profile"}</span>
-                                    </li>
-                                    <li>
-                                        <ExternalLink
-                                            href="/resume.pdf"
-                                            label="Resume"
-                                            preview={PreviewAsset {
-                                                src: AttrValue::from("/previews/manual/resume.png"),
-                                                alt: AttrValue::from("First page of Kyler Cao's resume"),
-                                            }}
-                                            on_pointer_preview={on_pointer_preview.clone()}
-                                            on_focus_preview={on_focus_preview.clone()}
-                                            on_hide_preview={on_hide_preview.clone()}
-                                        />
-                                        <span class="muted">{" — PDF resume"}</span>
-                                    </li>
-                                    <li>
-                                        <a class="link" href="mailto:kylercao18@gmail.com">{"Email"}</a>
-                                        <span class="muted">{" — send me a message"}</span>
-                                    </li>
-                                </ul>
-                            </div>
+                                })}
+                            </ul>
                         </section>
 
                         <section aria-labelledby="languages-heading" class="section-block">
                             <h2 id="languages-heading">{"Technical Skills"}</h2>
-                            <ul class="inline-list">
-                                <li><span class="muted">{"Languages"}</span>{"Python, TypeScript/JavaScript, Java, C++, C#, Go, SQL, COBOL"}</li>
-                                <li><span class="muted">{"Frameworks"}</span>{"React, Next.js, .NET, Flask, FastAPI, Node.js, Tailwind CSS, LangGraph"}</li>
-                                <li><span class="muted">{"Platforms"}</span>{"AWS, Linux, Docker, CI/CD, PostgreSQL, MySQL, Redis, TestArchitect"}</li>
-                                <li><span class="muted">{"Libraries"}</span>{"pandas, NumPy, scikit-learn, PyTorch, XGBoost, Matplotlib, pgvector"}</li>
-                            </ul>
+                            <div class="skill-groups">
+                                {for SKILL_GROUPS.iter().map(|(category, skills)| html! {
+                                    <div class="skill-group">
+                                        <h3>{*category}</h3>
+                                        <ul class="skill-tokens" aria-label={*category}>
+                                            {for skills.iter().map(|skill| html! {
+                                                <li>{skill_icon(skill)}<span>{*skill}</span></li>
+                                            })}
+                                        </ul>
+                                    </div>
+                                })}
+                            </div>
                         </section>
+
 
                         <section aria-labelledby="education-heading" class="section-block">
                             <h2 id="education-heading">{"Education"}</h2>
