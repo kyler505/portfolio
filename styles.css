@@ -691,6 +691,19 @@ a {
   overflow-wrap: anywhere;
 }
 
+.personal-section { position: relative; left: 50%; width: 100vw; margin-left: -50vw; }
+.scratchboard { position: relative; height: 100svh; overflow: hidden; border-block: 1px solid var(--border); background: radial-gradient(color-mix(in srgb, var(--muted) 28%, transparent) .7px, transparent .8px), var(--secondary); background-size: 18px 18px; }
+.scratchboard-credits { position: absolute; bottom: .5rem; right: .75rem; z-index: 4; color: var(--muted); font-size: .65rem; }
+.scratchboard-center { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; width: 40%; }
+.scratchboard-center h2 { margin: 0; color: var(--muted); font-size: .6rem; font-weight: 400; letter-spacing: .13em; text-transform: uppercase; }
+.scratchboard-center strong { display: block; color: var(--text); font-size: clamp(1.15rem, 3vw, 1.9rem); line-height: 1.15; letter-spacing: -.04em; margin-top: .6rem; }
+.scratchboard-item { position: absolute; left: 0; top: 0; width: clamp(5rem, 15%, 10rem); aspect-ratio: 1; }
+.scratchboard-piece { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: .15rem; padding: .25rem; border: 0; background: transparent; color: var(--text); font: inherit; font-size: clamp(.7rem, 1.8vw, .85rem); text-align: center; cursor: grab; touch-action: none; user-select: none; }
+.scratchboard-piece:active { cursor: grabbing; }
+.scratchboard-piece:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.scratchboard-cutout { width: 100%; height: 100%; object-fit: contain; pointer-events: none; filter: drop-shadow(0 6px 9px #0005); }
+[data-theme="light"] .scratchboard-item:is(.scratchboard-item-12, .scratchboard-item-13) .scratchboard-cutout { filter: invert(1) drop-shadow(0 6px 9px #0003); }
+
 .skill-group {
   align-items: start;
   border-top: 1px solid var(--border);
@@ -708,6 +721,10 @@ a {
   margin: 0;
   padding-top: 0.25rem;
   text-transform: none;
+}
+
+.education-group p {
+  font-size: 0.875rem;
 }
 
 .skill-tokens {

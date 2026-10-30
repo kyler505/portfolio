@@ -69,6 +69,25 @@ mod frontend {
         ),
     ];
 
+    const PERSONAL_INTERESTS: &[(&str, &str)] = &[
+        ("Molten FLISTATEC volleyball", "/previews/interests/volleyball.png"),
+        ("La Sportiva Solution Comp", "/previews/interests/climbing.png"),
+        ("SAVA A7L Pro", "/previews/interests/bike.png"),
+        ("Swim cap and goggles", "/previews/interests/swim.png"),
+        ("Adidas Adizero Evo SL", "/previews/interests/running.png"),
+        ("Marvel Cinematic Universe", "/previews/interests/marvel.png"),
+        ("Project Hail Mary", "/previews/interests/hailmary.png"),
+        ("Hunter x Hunter", "/previews/interests/hunter.png"),
+        ("Teamfight Tactics", "/previews/interests/tft.png"),
+        ("Chipotle bowl", "/previews/interests/chipotle.png"),
+        ("Salmon sashimi", "/previews/interests/sashimi.png"),
+        ("Street tacos", "/previews/interests/tacos.png"),
+        ("Niteharts", "/previews/interests/niteharts.png"),
+        ("Zedd", "/previews/interests/zedd.png"),
+        ("Never Enough by Daniel Caesar", "/previews/interests/never.png"),
+        ("0.1 flaws and all. by wave to earth", "/previews/interests/wave.png"),
+    ];
+
     const LINK_PANES: &[(&str, &str, &str, Option<&str>)] = &[
         (
             "GitHub",
@@ -163,25 +182,57 @@ mod frontend {
     const ENERGY_START_YEAR: i32 = 2026;
     const ENERGY_START_MONTH: u32 = 1;
     const ENERGY_START_DAY: u32 = 12;
-    const PREVIEW_PRELOAD_URLS: [&str; 11] = [
+    const PREVIEW_PRELOAD_URLS: [&str; 16] = [
         PREVIEW_DEFAULT_IMAGE,
         "/previews/manual/global-shop-solutions.jpg",
         "/previews/manual/techhub.png",
         "/previews/manual/tamu-campus.jpg",
-        "/previews/og/project-shade-og.png",
-        "/previews/og/temp-data-pipeline-og.png",
-        "/previews/og/gradescope-cli-og.png",
-        "/previews/og/local-poker-tracker-og.png",
+        "/previews/og/seer-card.svg",
+        "/previews/og/flightpath-card.svg",
+        "/previews/og/gradescope-cli-card.svg",
+        "/previews/og/local-poker-tracker-card.svg",
+        "/previews/og/wayshare-card.svg",
+        "/previews/og/oh-my-pi-card.svg",
+        "/previews/og/herdr-card.svg",
+        "/previews/og/vicinae-card.svg",
+        "/previews/og/omarchy-card.svg",
         GITHUB_LINK_SCREENSHOT,
         "/previews/manual/linkedin.png",
         "/previews/manual/resume.png",
     ];
 
-    const INTERESTED_PROJECTS: [(&str, &str, &str); 1] = [(
-        "wayshare",
-        "https://github.com/wesleygrimes/wayshare",
-        "Merged upstream PR #25: encrypted mouse input diagnostics",
-    )];
+    const INTERESTED_PROJECTS: [(&str, &str, &str, &str); 5] = [
+        (
+            "wayshare",
+            "https://github.com/wesleygrimes/wayshare",
+            "Share a Hyprland desktop with a Mac",
+            "/previews/og/wayshare-card.svg",
+        ),
+        (
+            "oh-my-pi (OMP)",
+            "https://github.com/can1357/oh-my-pi",
+            "Extensible terminal coding agent",
+            "/previews/og/oh-my-pi-card.svg",
+        ),
+        (
+            "Herdr",
+            "https://github.com/herdrdev/herdr",
+            "Terminal workspace for managing coding agents",
+            "/previews/og/herdr-card.svg",
+        ),
+        (
+            "Vicinae",
+            "https://github.com/vicinaehq/vicinae",
+            "Fast, extensible desktop launcher",
+            "/previews/og/vicinae-card.svg",
+        ),
+        (
+            "Omarchy",
+            "https://github.com/omacom/omarchy",
+            "Opinionated Arch Linux desktop environment",
+            "/previews/og/omarchy-card.svg",
+        ),
+    ];
 
     #[derive(Clone, Copy, PartialEq)]
     enum PreviewAnchor {
@@ -1404,25 +1455,25 @@ mod frontend {
             period: "Aug 2024 to May 2025", year: "’24", role: "Teaching Assistant",
             employer: "Texas A&M University", href: "https://www.tamu.edu/", link_class: "",
             image: "/previews/manual/tamu-campus.jpg",
-            description: "Python labs, office hours, and reviews for 120+ students",
+            description: "Taught Python to 120+ students and graded 400+ assignments and exams",
         },
         ExperienceEntry {
             period: "Oct 2025 to May 2026", year: "’25", role: "Internal Tools Developer",
             employer: "Texas A&M TechHub", href: "https://tamu.mybigcommerce.com/about/", link_class: "tamu-link",
             image: "/previews/manual/techhub.png",
-            description: "Created delivery tooling and device lifecycle automation for a 1,000+ device campus fleet",
+            description: "Built a delivery system handling 200+ monthly orders and shipped 8+ internal tools; deployed 5,000+ devices and reduced imaging time by 15%",
         },
         ExperienceEntry {
             period: "May 2026 to Aug 2026", year: "’26", role: "Product & Engineering Intern",
             employer: "Global Shop Solutions", href: "https://www.globalshopsolutions.com/", link_class: "global-shop-link",
             image: "/previews/manual/global-shop-solutions.jpg",
-            description: "AI-assisted COBOL-to-C# test triage and internal React + .NET tooling",
+            description: "Developed components for Launchpad, an internal developer platform; cut average ticket resolution time by 70% with an AI diagnosis dashboard",
         },
         ExperienceEntry {
             period: "Aug 2026 to Present", year: "’26", role: "Associate Software Engineer",
             employer: "Global Shop Solutions", href: "https://www.globalshopsolutions.com/", link_class: "global-shop-link",
             image: "/previews/manual/global-shop-solutions.jpg",
-            description: "Improving CI/CD pipelines and developing production-server features for GSS Cloud; building an internal developer code harness for reusable workflows with company services and tools",
+            description: "Built a COBOL-to-C# migration suite running 2,000+ UI regression tests; building an AI gateway and helped improve desktop ERP support data extraction",
         },
     ];
 
@@ -1613,6 +1664,25 @@ mod frontend {
                     })}
                 </ol>
             </div>
+        }
+    }
+
+    #[function_component(Scratchboard)]
+    fn scratchboard() -> Html {
+        html! {
+            <>
+                <div class="scratchboard">
+                    <div class="scratchboard-center"><h2 id="personal-heading">{"Off the Clock"}</h2><strong>{"A few things"}<br />{"I'm into."}</strong></div>
+                    <a class="scratchboard-credits" href="/previews/interests/credits.html" target="_blank" rel="noopener noreferrer">{"Image credits"}</a>
+                    {for PERSONAL_INTERESTS.iter().enumerate().map(|(index, (name, image))| html! {
+                        <div class={classes!("scratchboard-item", format!("scratchboard-item-{}", index))}>
+                            <button type="button" class="scratchboard-piece" aria-label={format!("{name}, move with arrow keys")}>
+                                <img class="scratchboard-cutout" src={format!("{image}?v=6")} alt="" draggable="false" />
+                            </button>
+                        </div>
+                    })}
+                </div>
+            </>
         }
     }
 
@@ -2114,12 +2184,16 @@ mod frontend {
                             <ul class="row-list">
                                 <li>
                                     <span>{"CodeHawk"}</span>
-                                    <span class="muted">{" · Tiered GitHub PR review system with a Go API and Python/LangGraph review worker"}</span>
+                                    <span class="muted">{" · Tiered GitHub PR review system with a Go API and Python/LangGraph worker; reviewed 50+ PRs"}</span>
                                 </li>
                                 <li>
                                     <ExternalLink
                                         href="https://github.com/nethum529/seer"
                                         label="Seer"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/seer-card.svg"),
+                                            alt: AttrValue::from("Seer GitHub repository preview"),
+                                        }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
                                         on_hide_preview={on_hide_preview.clone()}
@@ -2131,8 +2205,8 @@ mod frontend {
                                         href="https://github.com/kyler505/gradescope-cli"
                                         label="Gradescope CLI"
                                         preview={PreviewAsset {
-                                            src: AttrValue::from("/previews/og/gradescope-cli-og.png"),
-                                            alt: AttrValue::from("GitHub project image for Gradescope CLI"),
+                                            src: AttrValue::from("/previews/og/gradescope-cli-card.svg"),
+                                            alt: AttrValue::from("Gradescope CLI GitHub repository preview"),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -2145,8 +2219,8 @@ mod frontend {
                                         href="https://github.com/kyler505/local-poker-tracker"
                                         label="Local Poker Tracker"
                                         preview={PreviewAsset {
-                                            src: AttrValue::from("/previews/og/local-poker-tracker-og.png"),
-                                            alt: AttrValue::from("GitHub Open Graph image for Local Poker Tracker repository"),
+                                            src: AttrValue::from("/previews/og/local-poker-tracker-card.svg"),
+                                            alt: AttrValue::from("Local Poker Tracker GitHub repository preview"),
                                         }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
@@ -2158,6 +2232,10 @@ mod frontend {
                                     <ExternalLink
                                         href="https://github.com/kyler505/tamuhack25_aa"
                                         label="FlightPath"
+                                        preview={PreviewAsset {
+                                            src: AttrValue::from("/previews/og/flightpath-card.svg"),
+                                            alt: AttrValue::from("FlightPath GitHub repository preview"),
+                                        }}
                                         on_pointer_preview={on_pointer_preview.clone()}
                                         on_focus_preview={on_focus_preview.clone()}
                                         on_hide_preview={on_hide_preview.clone()}
@@ -2171,11 +2249,15 @@ mod frontend {
                         <section aria-labelledby="interested-heading" class="section-block">
                             <h2 id="interested-heading">{"Interested in"}</h2>
                             <ul class="row-list">
-                                {for INTERESTED_PROJECTS.iter().map(|(name, href, description)| html! {
+                                {for INTERESTED_PROJECTS.iter().map(|(name, href, description, image)| html! {
                                     <li>
                                         <ExternalLink
                                             href={*href}
                                             label={*name}
+                                            preview={PreviewAsset {
+                                                src: AttrValue::from(*image),
+                                                alt: AttrValue::from(format!("{name} GitHub repository preview")),
+                                            }}
                                             on_pointer_preview={on_pointer_preview.clone()}
                                             on_focus_preview={on_focus_preview.clone()}
                                             on_hide_preview={on_hide_preview.clone()}
@@ -2225,9 +2307,23 @@ mod frontend {
                             </ul>
                         </section>
 
+                        <section aria-labelledby="personal-heading" class="section-block personal-section">
+                            <Scratchboard />
+                        </section>
+
                         <section aria-labelledby="languages-heading" class="section-block">
-                            <h2 id="languages-heading">{"Technical Skills"}</h2>
+                            <h2 id="languages-heading">{"Skills & Education"}</h2>
                             <div class="skill-groups">
+                                <div class="skill-group education-group">
+                                    <h3>{"Education"}</h3>
+                                    <p>
+                                        <span>{"Texas A&M University"}</span>
+                                        <br />
+                                        <span class="muted">{"B.S. Computer Science · Minor in Business"}</span>
+                                        <br />
+                                        <span class="muted">{"GPA 3.59/4.00 · Expected May 2027"}</span>
+                                    </p>
+                                </div>
                                 {for SKILL_GROUPS.iter().map(|(category, skills)| html! {
                                     <div class="skill-group">
                                         <h3>{*category}</h3>
@@ -2239,16 +2335,6 @@ mod frontend {
                                     </div>
                                 })}
                             </div>
-                        </section>
-
-
-                        <section aria-labelledby="education-heading" class="section-block">
-                            <h2 id="education-heading">{"Education"}</h2>
-                            <p>
-                                <span>{"Texas A&M University"}</span>
-                                <br />
-                                <span class="muted">{"B.S. Computer Science · Minor in Business · GPA 3.59/4.00 · Expected May 2027"}</span>
-                            </p>
                         </section>
 
                         <section aria-labelledby="now-heading" class="section-block now-metric">

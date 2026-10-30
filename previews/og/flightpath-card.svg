@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<rect width="1280" height="720" fill="#101714"/><path d="M0 0h1280v720H0z" fill="none" stroke="#34433b" stroke-width="4"/>
+<path d="M72 94h36" stroke="#87bf9d" stroke-width="5"/><text x="126" y="102" fill="#9eafa4" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" letter-spacing="2">FLIGHT SEARCH</text>
+<text x="72" y="307" fill="#eff4ed" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="70" font-weight="650">FlightPath</text>
+<text x="74" y="365" fill="#b4c2b6" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="25">AI-powered flight search.</text>
+<path d="M72 580h1136" stroke="#34483b"/><text x="73" y="629" fill="#8a9e90" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23">kyler505 / tamuhack25_aa</text><text x="1165" y="630" fill="#91bca0" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="34">↗</text>
+<g fill="none" stroke="#7dac8c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M845 379c84-80 159-118 280-118m-27-20 31 18-29 20"/><path opacity=".4" d="M846 300h98m-98 36h60m169 52h64"/><circle cx="845" cy="379" r="8"/></g></svg>

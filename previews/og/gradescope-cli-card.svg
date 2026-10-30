@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<rect width="1280" height="720" fill="#101714"/><path d="M0 0h1280v720H0z" fill="none" stroke="#34433b" stroke-width="4"/>
+<path d="M72 94h36" stroke="#87bf9d" stroke-width="5"/><text x="126" y="102" fill="#9eafa4" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23" letter-spacing="2">COMMAND LINE</text>
+<text x="72" y="307" fill="#eff4ed" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="70" font-weight="650">Gradescope CLI</text>
+<text x="74" y="365" fill="#b4c2b6" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="25">Assignments and results from the terminal.</text>
+<path d="M72 580h1136" stroke="#34483b"/><text x="73" y="629" fill="#8a9e90" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="23">kyler505 / gradescope-cli</text><text x="1165" y="630" fill="#91bca0" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="34">↗</text>
+<g fill="none" stroke="#7dac8c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><rect x="824" y="226" width="338" height="202" rx="10"/><path d="m859 280 25 22-25 22m49 0h70"/><path opacity=".35" d="M860 366h235"/></g></svg>
