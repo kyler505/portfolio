@@ -39,6 +39,7 @@ body {
 
 html {
   scrollbar-width: none;
+  scroll-snap-type: y proximity;
 }
 
 html::-webkit-scrollbar {
@@ -53,7 +54,7 @@ body {
   line-height: 1.6;
   min-height: 100vh;
   --page-padding-y: 3.5rem;
-  padding: var(--page-padding-y) 1.5rem;
+  padding: var(--page-padding-y) 1.5rem 0;
   transition:
     background-color var(--theme-transition-normal) var(--theme-transition-ease),
     color var(--theme-transition-fast) var(--theme-transition-ease);
@@ -242,6 +243,7 @@ html[data-theme-transition]::view-transition-new(root) {
 
 .section-block {
   margin: 0;
+  scroll-snap-align: center;
   transition: opacity 220ms ease-out;
 }
 
@@ -264,9 +266,11 @@ html[data-theme-transition]::view-transition-new(root) {
   transform: translateX(-50%);
 }
 
-/* Keep the final section centerable without changing layout on rail clicks. */
-main[data-section-focus] {
-  padding-bottom: 50vh;
+.now-metric {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100svh;
 }
 
 main[data-section-focus] .section-block:not([data-focused]) {
@@ -454,6 +458,7 @@ ul {
 
 .experience-section {
   height: calc(100svh + var(--experience-scroll-steps) * 75svh);
+  scroll-snap-align: start;
 }
 
 .experience-pin {
@@ -471,6 +476,7 @@ ul {
 .experience-section + .section-block {
   margin-top: calc(clamp(7rem, 18vh, 11rem) - max(0px, (100svh - 28rem) / 2));
   position: sticky;
+  scroll-snap-align: none;
   bottom: calc(-1 * var(--builds-height, 0px) - clamp(7rem, 18vh, 11rem) + max(0px, (100svh - 28rem) / 2));
   visibility: hidden;
 }
@@ -1005,7 +1011,7 @@ footer {
     margin-top: calc(clamp(7rem, 18vh, 11rem) - max(0px, (100svh - 28rem) / 2) - 3.5rem - env(safe-area-inset-bottom));
     bottom: calc(-1 * var(--builds-height, 0px) - clamp(7rem, 18vh, 11rem) + max(0px, (100svh - 28rem) / 2) + 3.5rem + env(safe-area-inset-bottom));
   }
-  body { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
+  body { padding-bottom: 0; }
 }
 
 @media (max-width: 24rem) {

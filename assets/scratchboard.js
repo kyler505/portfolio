@@ -54,20 +54,33 @@
     function createWorld() {
       if (joint && world) world.destroyJoint(joint);
       joint = null; dragIndex = -1;
-      world = new P.World({ gravity: P.Vec2(0, reduced.matches ? 0 : 14), allowSleep: true });
+      world = new P.World({ gravity: P.Vec2(0, 0), allowSleep: true });
       const w = board.clientWidth, h = board.clientHeight, t = 100;
       const boundary = world.createBody();
       for (const [x, y, width, height] of [[w / 2, h + t / 2, w + t * 2, t], [-t / 2, h / 2, t, h + t * 2], [w + t / 2, h / 2, t, h + t * 2], [w / 2, -t / 2, w + t * 2, t]]) {
-        boundary.createFixture(P.Box(width / (2 * scale), height / (2 * scale), vec(x, y), 0), { friction: 0.6 });
+        boundary.createFixture(P.Box(width / (2 * scale), height / (2 * scale), vec(x, y), 0), { friction: 0, restitution: 0.9 });
+      }
+      const itemWidth = items[0].offsetWidth;
+      const columns = Math.max(1, Math.min(Math.floor(w / itemWidth), Math.ceil(Math.sqrt(items.length * w / h))));
+      const rows = Math.ceil(items.length / columns);
+      const slots = Array.from({ length: items.length }, (_, i) => Math.floor((i + 0.5) * columns * rows / items.length));
+      for (let i = slots.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [slots[i], slots[j]] = [slots[j], slots[i]];
       }
       bodies = items.map((item, i) => {
         const width = item.offsetWidth, height = item.offsetHeight;
-        const columns = Math.max(1, Math.floor(w / width)), rows = Math.ceil(items.length / columns);
-        const x = width / 2 + (w - width) * (i % columns) / Math.max(1, columns - 1);
-        const y = height / 2 + Math.max(0, h - height) * Math.floor(i / columns) / Math.max(1, rows - 1);
-        const body = world.createDynamicBody({ position: vec(x, y), bullet: true, linearDamping: 0.12, angularDamping: 0.4, allowSleep: true });
+        const cellWidth = w / columns, cellHeight = h / rows;
+        const x = (slots[i] % columns + 0.5) * cellWidth + (Math.random() - 0.5) * Math.max(0, cellWidth - width);
+        const y = (Math.floor(slots[i] / columns) + 0.5) * cellHeight + (Math.random() - 0.5) * Math.max(0, cellHeight - height);
+        const body = world.createDynamicBody({ position: vec(x, y), bullet: true, linearDamping: 0.01, angularDamping: 0.05, allowSleep: true });
         for (const r of rectangles(item.querySelector('img'), width, height)) {
-          body.createFixture(P.Box(Math.max(0.005, r.w / (2 * scale)), Math.max(0.005, r.h / (2 * scale)), vec(r.x, r.y), 0), { density: 1, friction: 0.55, restitution: 0.08 });
+          body.createFixture(P.Box(Math.max(0.005, r.w / (2 * scale)), Math.max(0.005, r.h / (2 * scale)), vec(r.x, r.y), 0), { density: 1, friction: 0.05, restitution: 0.8 });
+        }
+        if (!reduced.matches) {
+          const angle = i * 2.399963;
+          body.setLinearVelocity(P.Vec2(Math.cos(angle) * 0.16, Math.sin(angle) * 0.16));
+          body.setAngularVelocity((i % 2 ? -1 : 1) * 0.045);
         }
         return { body, item, width, height };
       });
@@ -135,7 +148,7 @@
     function ground() { if (!groundBody || groundBody.getWorld() !== world) groundBody = world.createBody(); return groundBody; }
     const observer = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; if (visible) start(); else stop(); });
     const onScroll = () => { if (!visible || reduced.matches) return; const r = board.getBoundingClientRect(); board.style.backgroundPosition = `0 ${(innerHeight / 2 - (r.top + r.height / 2)) * 0.06}px`; };
-    const onMotion = () => { world.setGravity(P.Vec2(0, reduced.matches ? 0 : 14)); if (reduced.matches) { board.style.backgroundPosition = ''; stop(); } else { bodies.forEach(({ body }) => body.setAwake(true)); start(); } };
+    const onMotion = () => { if (reduced.matches) { board.style.backgroundPosition = ''; stop(); } else { bodies.forEach(({ body }, i) => { body.setAwake(true); if (body.getLinearVelocity().lengthSquared() < 0.001) body.setLinearVelocity(P.Vec2(Math.cos(i * 2.399963) * 0.16, Math.sin(i * 2.399963) * 0.16)); }); start(); } };
     let size = `${board.clientWidth}:${board.clientHeight}`;
     const sizeObserver = new ResizeObserver(() => { const next = `${board.clientWidth}:${board.clientHeight}`; if (next !== size) { size = next; stop(); createWorld(); start(); } });
     on(window, 'scroll', onScroll, { passive: true });
