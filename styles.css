@@ -282,6 +282,12 @@ main[data-section-focus] .section-block:focus-within {
   opacity: 1;
 }
 
+/* The full-width board should disappear when another section is in focus. */
+main[data-section-focus] .personal-section:not([data-focused]):not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .section-block h1,
 .section-block h2 {
   scroll-margin-top: 2rem;
